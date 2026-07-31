@@ -1,0 +1,82 @@
+{
+  "closed_form": {
+    "kepler_period_s": 5738.992815014798,
+    "lqr_attitude_gain": 0.039999999999999244,
+    "lqr_attitude_gain_formula": 0.04,
+    "lqr_slowest_pole_rad_s": 0.01979424427208339,
+    "orbit_mean_motion_rad_s": 0.001094823692885802,
+    "orbit_period_s": 5738.992815014798,
+    "pyramid_gram_diagonal": 1.3333333333333335
+  },
+  "disturbance": {
+    "final_error_arcsec": 114.24552577323506,
+    "peak_disturbance_torque_nm": 5.0345165931080664e-05,
+    "peak_error_arcsec": 292.2191331970731,
+    "peak_wheel_speed_rpm": 138.20641385601303,
+    "stored_momentum_end_nms": 0.14320439516605774
+  },
+  "dumping": {
+    "fixed field": {
+      "initial_field_projection_end_nms": 1.2937585264949567,
+      "initial_field_projection_start_nms": 1.293847768378581,
+      "peak_dipole_am2": 18.354245186913708,
+      "removed_fraction": 0.44474631887985294,
+      "stored_end_nms": 1.4950662913000505,
+      "stored_start_nms": 2.6925824035672528
+    },
+    "orbiting field": {
+      "initial_field_projection_end_nms": 0.5167570110770962,
+      "initial_field_projection_start_nms": 1.293847768378581,
+      "peak_dipole_am2": 18.70517283069254,
+      "removed_fraction": 0.5648144392190524,
+      "stored_end_nms": 1.1717729832453265,
+      "stored_start_nms": 2.6925824035672528
+    }
+  },
+  "settings": {
+    "environment_orbits": 1.0,
+    "environment_sample_stride": 10,
+    "environment_time_step_s": 4.0,
+    "slew_duration_s": 900.0,
+    "slew_sample_stride": 10,
+    "slew_time_step_s": 0.5
+  },
+  "slew": {
+    "LQR": {
+      "final_error_deg": 0.00015649610284006256,
+      "initial_error_deg": 59.999999999999986,
+      "overshoot_percent": 3.940169261598924,
+      "peak_body_rate_deg_s": 0.5665688739905523,
+      "peak_commanded_torque_nm": 0.04000000000000678,
+      "peak_stored_momentum_nms": 0.8838556346369428,
+      "peak_wheel_speed_rpm": 946.5394987727826,
+      "peak_wheel_torque_nm": 0.028867513459487796,
+      "saturated_samples": 0.0,
+      "settling_time_s": 380.0
+    },
+    "quaternion PD": {
+      "final_error_deg": 0.00019920600489318696,
+      "initial_error_deg": 59.999999999999986,
+      "overshoot_percent": 4.157031266974006,
+      "peak_body_rate_deg_s": 0.5340060292159017,
+      "peak_commanded_torque_nm": 0.03659216673916244,
+      "peak_stored_momentum_nms": 0.8526124361535506,
+      "peak_wheel_speed_rpm": 911.2764988370734,
+      "peak_wheel_torque_nm": 0.026211702221209006,
+      "saturated_samples": 0.0,
+      "settling_time_s": 470.0
+    },
+    "quaternion PD, over-driven": {
+      "final_error_deg": 1.2359780447441203e-12,
+      "initial_error_deg": 59.999999999999986,
+      "overshoot_percent": 3.924656058204653,
+      "peak_body_rate_deg_s": 1.263461569213509,
+      "peak_commanded_torque_nm": 0.2287010421197653,
+      "peak_stored_momentum_nms": 2.0192687163539333,
+      "peak_wheel_speed_rpm": 1892.0478847950758,
+      "peak_wheel_torque_nm": 0.05,
+      "saturated_samples": 5.0,
+      "settling_time_s": 195.0
+    }
+  }
+}
