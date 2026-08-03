@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from attitude_control.analysis.metrics import (
     ManoeuvreMetrics,
+    mean_error_vector,
     momentum_drift,
     settling_time,
     signed_error_angle,
@@ -28,6 +29,7 @@ __all__ = [
     "ManoeuvreMetrics",
     "dumping_summary",
     "format_table",
+    "mean_error_vector",
     "metrics_table",
     "momentum_drift",
     "round_trip_residuals",

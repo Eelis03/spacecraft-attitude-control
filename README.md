@@ -1,83 +1,47 @@
 # Spacecraft Attitude Control
 
-Quaternion attitude dynamics with reaction wheel LQR and PD control and momentum dumping.
+Quaternion attitude dynamics with reaction wheel LQR, PD and PID control and
+magnetic momentum dumping, for guidance, navigation and control engineers who
+want a readable reference implementation to check a design or a derivation
+against.
 
 [![CI](https://github.com/Eelis03/spacecraft-attitude-control/actions/workflows/ci.yml/badge.svg)](https://github.com/Eelis03/spacecraft-attitude-control/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## Overview
+![Momentum along and across the field, with the along component unchanged by dumping](docs/figures/momentum_dumping.png)
 
-This library simulates the attitude of a rigid spacecraft carrying a redundant
-reaction wheel array and magnetic torque rods, and compares two three axis
-control laws on identical manoeuvres. It provides four attitude representations
-with conversions in both directions, rigid body dynamics with a full inertia
-tensor and correct body plus wheel momentum bookkeeping, quaternion feedback PD
-and linear quadratic regulator designs behind one protocol, pseudoinverse wheel
-allocation with null space speed management and saturation, and magnetic momentum
-unloading. It is aimed at guidance, navigation, and control engineers who need a
-readable reference implementation to check a design or a derivation against.
+A magnetic torque rod produces `L = m x B`, which is orthogonal to the field for
+every possible dipole. The left panel is that constraint measured: with the field
+frozen in inertial space the component of stored momentum across the field
+collapses from 2.3613 to 0.0755 N m s while the component along it sits at
+1.2938 N m s from the first sample to the last. Dumping stalls with 48 per cent
+of the momentum still on board. The right panel is the same law along the real
+orbit, where the field direction sweeps and the uncontrollable direction moves
+with it, and 90.6 per cent comes off.
 
-## Problem
+## How this simulation is known to be right
 
-A spacecraft that points an instrument has to rotate its body to a commanded
-attitude and hold it there while the environment pushes back. Three things make
-that harder than a textbook servo problem.
+Every result below rests on bookkeeping that closes. These are the checks that
+say it does, each one against a closed form or an exactly conserved quantity
+rather than against a recorded number.
 
-The kinematics are not linear. Attitude lives on a curved space, so every
-parameterisation has either a singularity or a redundancy. Quaternions are
-redundant, since `q` and `-q` are the same attitude, and a feedback law that
-ignores that will happily command a 350 degree slew where a 10 degree slew would
-do. Modified Rodrigues parameters are singular at 360 degrees unless the shadow
-set is used, and Euler angles are singular at a pitch of 90 degrees.
+| Invariant | Value | Where |
+| --- | --- | --- |
+| Total inertial angular momentum, wheels active, is constant with no external torque | drifts 1.87e-15 N m s over a 900 s slew holding 0.85 N m s | `examples/slew_manoeuvre.py`, `test_inertial_momentum_is_conserved_with_active_wheels` |
+| Quaternion norm drift of RK4 equals its closed form `N x^6 / 144`, with `x` the half angle turned per step | predicted 3.39e-9 after 2000 steps, measured agrees to 1 per cent | `test_quaternion_norm_drift_matches_the_integrator_prediction` |
+| Accumulated external impulse equals the momentum stored in the wheels | 2.87e-01 N m s against 0.2865 N m s stored, two orbits | `examples/disturbance_rejection.py` |
+| Momentum along a fixed magnetic field cannot be changed by any dipole | 5.99e-12 N m s excursion over three orbits of dumping | `examples/momentum_dumping.py`, `test_a_fixed_field_conserves_momentum_along_it_over_a_full_run` |
+| Wheel allocation reproduces any achievable commanded torque exactly | to 64 machine epsilons over 200 random commands | `test_allocation_reproduces_the_commanded_torque` |
+| The LQR attitude gain is `sqrt(q_att / r) I` for any inertia tensor | 0.04 I, matching the formula to 1e-12 | `test_lqr_attitude_gain_has_a_closed_form` |
+| Attitude representations round trip to machine precision | 6.305e-16, 7.407e-16 and 2.264e-14 rad | `examples/attitude_representations.py` |
 
-The actuators are internal. Reaction wheels exchange angular momentum with the
-body and cannot change the total. Every torque the environment applies is
-therefore stored in the wheels and stays there. A gravity gradient torque of
-5.0e-5 N m may sound negligible, but on the orbit used here it deposits 0.14 N m s
-into the wheels every orbit, and with 15.1 orbits in a day that is 2.2 N m s
-against a 4.0 N m s per wheel limit. Something outside the vehicle has to take
-that momentum away.
-
-The one actuator that can do that is fundamentally incomplete. A magnetic torque
-rod produces `L = m x B`, which is orthogonal to the field for every possible
-dipole `m`. The momentum along the field direction cannot be touched at all at
-any instant. Whether the vehicle can still be unloaded depends entirely on how
-much the field direction moves as the orbit progresses.
-
-## Approach
-
-Attitude is propagated as a unit quaternion, which has no singularity anywhere,
-with the direction cosine matrix, modified Rodrigues parameters, and 3-2-1 Euler
-angles provided as conversions for the places where each is the natural choice.
-The sign ambiguity is resolved by a canonical form with a non-negative scalar
-part, applied to the error quaternion, which is what makes the feedback take the
-short way round. The shadow set switch keeps modified Rodrigues parameters inside
-the unit ball. Conversions follow Shuster (1993) and Schaub and Junkins (2018),
-with the matrix to quaternion direction using Shepperd's method (1978) so that it
-stays accurate at a 180 degree rotation.
-
-The plant is Euler's equation with the wheel array folded in as
-`J w_dot + W u + w x (J w + W h_w) = L_external`, following Hughes (2004) and
-Markley and Crassidis (2014). Two controllers sit behind a single protocol so a
-scenario can be re-run with only the control law swapped. The first is quaternion
-feedback PD, `L = -K dq_v - P w`, whose global asymptotic stability is proved by
-Wie and Barba (1985) and Wie, Weiss and Arapostathis (1989) with a Lyapunov
-argument that needs no plant model; the gains are set as `K = 2 wn^2 J` and
-`P = 2 zeta wn J`, which makes every axis an identical second order system with
-the stated natural frequency and damping ratio. The second is an infinite horizon
-LQR (Kalman, 1960) designed on the attitude dynamics linearised about the command,
-which couples the axes where the PD law does not. Both offer a feedforward of the
-gyroscopic term, which cancels the coupling exactly and leaves a linear closed
-loop.
-
-Wheel torque is distributed over a four wheel pyramid by the minimum norm
-pseudoinverse, exact rather than approximate because the array has full row rank,
-with a null space term steering the wheel speeds and a saturation model on both
-motor torque and stored momentum. Momentum is unloaded by the cross product law
-`m = (k / |B|^2) (h x B)` of Camillo and Markley (1980) against a tilted dipole
-field. See [docs/design-notes.md](docs/design-notes.md) for the alternatives that
-were considered and rejected, and for what the model deliberately leaves out.
+The first row is the strongest single check on the model: with no external torque
+`A(q)^T (J w + W h_w)` must be exactly constant whatever the wheels are doing, so
+any sign error, dropped term or mistaken inertia convention shows up in it
+immediately. The second is why the integrator does not renormalise the quaternion
+inside a step. Renormalising would hide the drift, and the drift has a closed
+form, so it is the sharpest diagnostic available.
 
 ## Installation
 
@@ -96,8 +60,6 @@ python -m venv .venv
 .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
-
-## Usage
 
 Slew a spacecraft 60 degrees and read off what it cost:
 
@@ -126,20 +88,51 @@ peak wheel torque  0.0262 N m
 momentum drift     1.87e-15 N m s
 ```
 
-Runnable examples live in `examples/`:
+## The three problems this models
 
-```bash
-uv run python examples/attitude_representations.py
-uv run python examples/slew_manoeuvre.py
-uv run python examples/disturbance_rejection.py
-uv run python examples/momentum_dumping.py
-```
+The kinematics are not linear. Attitude lives on a curved space, so every
+parameterisation has either a singularity or a redundancy. Quaternions are
+redundant, since `q` and `-q` are the same attitude, and a feedback law that
+ignores that will happily command a 350 degree slew where a 10 degree slew would
+do. The state here is a unit quaternion, singularity free everywhere, with the
+sign ambiguity resolved by a canonical form applied to the error quaternion.
+Direction cosine matrices, modified Rodrigues parameters with the shadow set
+switch, and 3-2-1 Euler angles are provided as conversions, following Shuster
+(1993) and Schaub and Junkins (2018), with Shepperd's method (1978) for the
+matrix to quaternion direction so that it stays accurate at 180 degrees.
 
-Each accepts `--quick` for a shortened run and `--no-figure` to skip plotting.
+The actuators are internal. Reaction wheels exchange angular momentum with the
+body and cannot change the total, so every torque the environment applies is
+stored in the wheels and stays there. A gravity gradient torque of 5.035e-05 N m
+deposits 0.1432 N m s into the wheels every orbit, which over the 15.1 orbits in
+a day is 2.2 N m s against a 4.0 N m s per wheel limit. The plant is Euler's
+equation with the array folded in as
+`J w_dot + W u + w x (J w + W h_w) = L_external`, following Hughes (2004) and
+Markley and Crassidis (2014), and torque is distributed over a four wheel pyramid
+by the minimum norm pseudoinverse with null space speed steering and saturation
+on both motor torque and stored momentum.
+
+The one actuator that can remove momentum is fundamentally incomplete, which is
+the figure at the top of this page. Unloading uses the cross product law
+`m = (k / |B|^2) (h x B)` of Camillo and Markley (1980) against a tilted dipole
+field.
+
+Three control laws sit behind one protocol, so a scenario can be re-run with only
+the law swapped. Quaternion feedback PD, `L = -K dq_v - P w`, is globally
+asymptotically stable by the Lyapunov argument of Wie, Weiss and Arapostathis
+(1989), which needs no plant model; its gains `K = 2 wn^2 J` and `P = 2 zeta wn J`
+make every axis an identical second order system. The infinite horizon LQR
+(Kalman, 1960) is designed on the linearised dynamics and couples the axes where
+the PD law does not. The PID law adds `-I x` with `x_dot = dq_v` to remove the
+static offset the other two leave under a disturbance, with the integral gain set
+to a quarter of the Routh-Hurwitz limit `2 zeta wn^3` and wind-up handled by
+conditional integration. See [docs/design-notes.md](docs/design-notes.md) for the
+alternatives that were considered and rejected, for what the model leaves out,
+and for what closing the integral action limitation cost.
 
 ## Results
 
-Every number below is printed by the command shown above it. The vehicle is the
+Every number here is printed by the command shown above it. The vehicle is the
 same throughout: inertia `[[90, 5, -3], [5, 100, 2], [-3, 2, 75]]` kg m^2, four
 reaction wheels on an isotropic pyramid with 0.0064 kg m^2 axial inertia, a
 0.05 N m torque limit and a 4.0 N m s momentum limit per wheel, on a circular
@@ -147,7 +140,8 @@ orbit at 550 km altitude and 51.6 degrees inclination. The PD design uses
 `wn = 0.02` rad/s and `zeta = 1/sqrt(2)`; the LQR uses weights
 `(q_att, q_rate, r) = (1, 1, 625)`, which place its slowest closed loop mode at
 0.01979 rad/s, within about one per cent of the PD natural frequency, so the two
-are compared at matched bandwidth.
+are compared at matched bandwidth. The PID design is the PD design plus its
+integral term and nothing else.
 
 ### Representation accuracy
 
@@ -164,23 +158,26 @@ The worst departure from orthonormality over the same set is 1.221e-15. The
 Euler path is a factor of 36 worse than the other two because the extraction
 divides by the cosine of the pitch angle, which is small near gimbal lock.
 
-### Slew manoeuvre, PD against LQR
+### Slew manoeuvre
 
 `uv run python examples/slew_manoeuvre.py`, a rest to rest 60 degree slew about
 the body axis `(1, 2, 2)`, 900 s at a 0.2 s step:
+
+![Attitude error and largest wheel torque for four control laws, showing the over-driven run flat against the torque limit and the PID run decaying most slowly](docs/figures/slew_manoeuvre.png)
 
 | controller | settling [s] | overshoot [%] | final error [deg] | peak wheel [rpm] | peak wheel torque [N m] | peak stored momentum [N m s] |
 | --- | --- | --- | --- | --- | --- | --- |
 | quaternion PD | 470.0 | 4.16 | 1.992e-04 | 912.2 | 2.621e-02 | 0.8534 |
 | LQR | 379.0 | 3.94 | 1.565e-04 | 946.7 | 2.887e-02 | 0.8839 |
 | quaternion PD, over-driven | 192.0 | 3.94 | 1.236e-12 | 1896.2 | 5.000e-02 | 2.0194 |
+| quaternion PID | 870.0 | 43.13 | 3.567e-03 | 1177.0 | 2.621e-02 | 1.1013 |
 
-Peak commanded body torque was 0.0366 N m for PD, 0.0400 N m for LQR, and
-0.2287 N m for the over-driven case, which exceeded the wheel torque limit and
-was clipped for 2.3 per cent of the run. The total angular momentum in the
-inertial frame drifted by 1.87e-15, 1.61e-15, and 1.90e-15 N m s respectively,
-against stored momenta of order 1 N m s, so the wheel bookkeeping is exact to
-rounding.
+Peak commanded body torque was 0.0366 N m for PD and for PID, 0.0400 N m for
+LQR, and 0.2287 N m for the over-driven case, which exceeded the wheel torque
+limit and was clipped for 2.3 per cent of the run. The total angular momentum in
+the inertial frame drifted by between 1.41e-15 and 1.90e-15 N m s across the four
+runs, against stored momenta of order 1 N m s, so the wheel bookkeeping is exact
+to rounding.
 
 At matched bandwidth the LQR settles 19 per cent faster than the PD design and
 overshoots slightly less, and it pays for that with 4 per cent more wheel speed
@@ -191,133 +188,132 @@ torque. The LQR weights the commanded torque equally on all three axes instead,
 which gives its attitude gain the closed form `sqrt(q_att / r) I`, exactly
 0.04 I here for any inertia tensor. The result is a faster response on the light
 axes and a slower one on the heavy axis, and the mixture settles sooner overall.
-Neither design has an integral term, so both converge to the commanded attitude
-with no steady state error when no disturbance acts, which the 1e-4 degree final
-errors show. The over-driven case is included to exercise the saturation model:
-it reaches the target in 192 s but only by running the wheels at their torque
-limit and to twice the stored momentum.
+
+The last two rows are the cost of the extremes. The over-driven case reaches the
+target in 192 s but only by running the wheels at their torque limit and to twice
+the stored momentum, which is the flat top in the right panel. The PID case is
+the opposite extreme: on a manoeuvre with no disturbance its integral term has
+nothing to remove, so it only accumulates during the approach and has to be
+unwound, which is 43 per cent overshoot and 400 s of extra settling time. Its
+value appears in the next run, not this one.
 
 ### Disturbance rejection
 
 `uv run python examples/disturbance_rejection.py`, an inertial hold over two
-orbits at a 1.0 s step. The orbit period is 5739.0 s and the mean motion is
-1.094824e-03 rad/s.
+orbits at a 1.0 s step. The orbit period is 5739.0 s, the mean motion is
+1.094824e-03 rad/s, and the peak gravity gradient torque is 5.035e-05 N m.
 
-| controller | peak GG torque [N m] | mean error [arcsec] | peak error [arcsec] | stored after 2 orbits [N m s] | per orbit [N m s] | peak wheel [rpm] |
+![Pointing error and stored momentum for three control laws, with integral action removing the offset while the three momentum curves lie exactly on top of each other](docs/figures/disturbance_rejection.png)
+
+| controller | mean error [arcsec] | peak error [arcsec] | mean error vector [arcsec] | stored after 2 orbits [N m s] | per orbit [N m s] | peak wheel [rpm] |
 | --- | --- | --- | --- | --- | --- | --- |
-| quaternion PD | 5.035e-05 | 190.3 | 292.2 | 0.2865 | 0.1432 | 276.5 |
-| LQR | 5.035e-05 | 167.7 | 259.6 | 0.2865 | 0.1433 | 276.5 |
+| quaternion PD | 190.3 | 292.2 | 144.80 | 0.2865 | 0.1432 | 276.5 |
+| LQR | 167.7 | 259.6 | 128.56 | 0.2865 | 0.1433 | 276.5 |
+| quaternion PID | 46.3 | 126.5 | 0.09 | 0.2866 | 0.1433 | 276.6 |
 
 The change in total inertial angular momentum over the run is 2.87e-01 N m s for
-both, which matches the stored momentum column, confirming that the wheels
-absorbed the whole disturbance impulse and nothing leaked.
+all three, matching the stored momentum column, which is the impulse invariant
+above: the wheels absorbed the whole disturbance and nothing leaked.
 
-Neither controller drives the error to zero here, because neither has integral
-action and the gravity gradient torque has a non-zero mean in the body frame. The
-residual is the static gain of the loop against that mean torque, so the LQR is
-12 per cent better only because its attitude gain happens to be larger on the
-axes the disturbance loads. Both are of order 200 arcsec, which is a poor
-pointing performance and is the honest consequence of a proportional plus
-derivative structure. Momentum accumulates at 0.143 N m s per orbit, that is
-2.2 N m s per day against a 4.0 N m s per wheel limit, so the array needs
-unloading within a few days even with gravity gradient as the only disturbance.
+The mean error vector column is the one that matters. It averages the error as a
+vector rather than as a magnitude, so a constant offset survives it and a zero
+mean oscillation cancels. Without integral action the loop settles to the static
+gain against the mean disturbance torque, 144.80 arcsec for PD and 128.56 for the
+LQR, and the LQR is better only because its attitude gain happens to be larger on
+the axes the disturbance loads. With integral action that offset is 0.09 arcsec,
+a factor of 1600 smaller, and what remains is the periodic part of the torque
+which no integrator can remove: the error vector traces a small circle at the
+orbital rate instead of sitting still off target. In magnitude that is 46.3
+arcsec mean against 190.3.
+
+The right hand panel is what the numbers cannot show on their own. The three
+stored momentum curves lie exactly on top of each other, because momentum
+accumulation is set by the environment and not by the control law. Integral
+action changes where the vehicle points, not how much has to be dumped: at
+0.1432 N m s per orbit, that is 2.2 N m s per day against a 4.0 N m s per wheel
+limit, so the array needs unloading within a few days whichever law is flying.
 
 ### Magnetic momentum dumping
 
 `uv run python examples/momentum_dumping.py`, starting from 2.6926 N m s of
 stored momentum, three orbits at a 2.0 s step, gain 2.0e-4 per second and a
 30 A m^2 rod limit. The two runs differ only in whether the magnetic field is
-allowed to move.
+allowed to move, and the figure at the top of this page is this table.
 
 | run | stored start [N m s] | stored end [N m s] | removed [%] | along field start | along field end | across field start | across field end |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | field fixed in inertial space | 2.6926 | 1.2960 | 51.9 | 1.2938 | 1.2938 | 2.3613 | 0.0755 |
 | field along the reference orbit | 2.6926 | 0.2525 | 90.6 | 1.2938 | 0.1361 | 2.3613 | 0.2127 |
 
-This is the limitation made visible rather than described. With the field frozen,
-the component of momentum across the field falls from 2.3613 to 0.0755 N m s, a
-97 per cent reduction, while the component along the field is 1.2938 N m s at the
-start and 1.2938 N m s at the end. Measured on the exactly conserved quantity,
-the projection of total inertial momentum on the field direction, the largest
-excursion over the whole run is 5.99e-12 N m s, which is integration noise. No
-gain, no run time, and no rod sizing changes that number, because `m x B` is
-orthogonal to `B` for every `m`. Dumping stalls with 48 per cent of the momentum
-still on board.
+Measured on the exactly conserved quantity, the projection of total inertial
+momentum on the field direction, the largest excursion over the fixed field run
+is 5.99e-12 N m s, which is integration noise. No gain, no run time and no rod
+sizing changes that number, because `m x B` is orthogonal to `B` for every `m`.
 
 Along the real orbit the same law removes 90.6 per cent, because the field
-direction sweeps through a large solid angle and the uncontrollable direction
-moves with it. On that run the projection of inertial momentum on the initial
-field direction goes from 1.2938 to 0.0804 N m s: the same direction that was
-untouchable in the first run becomes reachable once the field has turned. Peak
-rod dipole stayed below the 30 A m^2 limit in both runs.
+direction sweeps through a large solid angle. On that run the projection of
+inertial momentum on the *initial* field direction goes from 1.2938 to 0.0804
+N m s: the direction that was untouchable in the first run becomes reachable once
+the field has turned. Peak rod dipole stayed below the 30 A m^2 limit in both.
 
-## Architecture
-
-Five layers, each importing only from the ones above it in this table.
-
-| Module | Responsibility |
-| --- | --- |
-| `src/attitude_control/numeric.py` | Array type aliases and shape-checked conversion helpers. |
-| `src/attitude_control/model/attitude.py` | Quaternion, DCM, MRP, and Euler representations, conversions in both directions, sign ambiguity and shadow set handling, kinematic equations. |
-| `src/attitude_control/model/inertia.py` | Validated inertia tensors, wheel array geometry, pyramid distribution matrix, pseudoinverse and null space projector. |
-| `src/attitude_control/model/dynamics.py` | Euler's equation with wheels, body and inertial angular momentum, kinetic energy, packed state derivative. |
-| `src/attitude_control/model/environment.py` | Circular orbit, gravity gradient torque, tilted dipole magnetic field, constant field. |
-| `src/attitude_control/algorithm/controller.py` | The controller protocol, quaternion feedback PD, LQR on the linearised dynamics, gyroscopic feedforward. |
-| `src/attitude_control/algorithm/allocation.py` | Minimum norm wheel torque, null space wheel speed steering, torque and momentum saturation. |
-| `src/attitude_control/algorithm/momentum.py` | Cross product magnetic unloading and the split of momentum into removable and untouchable parts. |
-| `src/attitude_control/pipeline/integrator.py` | Fixed step RK4 and the closed form quaternion norm drift of one step. |
-| `src/attitude_control/pipeline/scenario.py` | Scenario configuration and the runner that produces a structured trace. |
-| `src/attitude_control/analysis/metrics.py` | Settling time, overshoot, peak wheel speed and torque, stored momentum, momentum drift. |
-| `src/attitude_control/analysis/representation.py` | Round trip residuals between representations. |
-| `src/attitude_control/analysis/report.py` | Fixed width text tables for the example scripts. |
-| `src/attitude_control/analysis/figures.py` | Matplotlib figures for the three scenarios. |
-| `src/attitude_control/configuration.py` | The reference vehicle, orbit, gains, and the three scenarios shared by examples and tests. |
-| `examples/` | Wiring scripts with no logic of their own. |
-
-The model layer is pure: no state, no input or output, every function testable
-against a closed form. The algorithm layer maps a state to a command and never
-integrates. The pipeline layer owns time and produces a trace without
-interpreting it. The analysis layer only reads traces.
-
-## Testing
+## Reproducing everything above
 
 ```bash
-uv run pytest
+uv sync --all-extras --dev
+uv run python examples/attitude_representations.py
+uv run python examples/slew_manoeuvre.py
+uv run python examples/disturbance_rejection.py
+uv run python examples/momentum_dumping.py
+```
+
+Each example accepts `--quick` for a shortened run and `--no-figure` to skip
+plotting, and writes its own plot to `figures/`, which is ignored by git. The
+tracked images below `docs/` are written only by the command at the end of this
+section. Checks:
+
+```bash
+uv run pytest --cov=src/attitude_control --cov-report=term-missing
 uv run ruff check .
 uv run mypy
 ```
 
-The suite has three tiers: property and invariant tests covering the mathematics,
-regression tests pinning recorded behaviour, and integration tests running each
-example script under a reduced iteration count.
+That command measures 99 per cent statement coverage over 1076 statements, and
+CI fails the build below 97. The suite has three tiers: property and invariant
+tests covering the mathematics, including every row of the invariant table above;
+regression tests pinning a recorded run in `tests/data/reference_run.json` with a
+tolerance rule per quantity, each derived from how the quantity is computed and
+stated in the docstring beside it; and integration tests running each example
+script as a subprocess under `--quick`. Quantities that are accumulated rounding,
+such as the momentum drift, are checked against a derived bound rather than
+pinned, because pinning them would pin the order in which one machine sums a dot
+product.
 
-Tier one covers the mathematics. The quaternion norm drift over a 1000 s
-unnormalised integration is compared against its closed form value
-`N (|w| dt / 2)^6 / 144`, which follows from the truncated cosine and sine series
-of an RK4 step. Every representation round trips, including across a quaternion
-sign flip and through the modified Rodrigues shadow set switch at rotations
-beyond 180 degrees. Attitude matrices stay orthonormal with determinant plus one.
-Total angular momentum in the inertial frame is conserved through a full slew
-with the wheels active. A torque free axisymmetric body reproduces the analytic
-precession rate `w3 (Ja - Jt) / Jt`, an asymmetric one conserves both energy and
-momentum, and the intermediate axis instability appears for a spin about the
-middle axis and not for the other two. Both controllers null a large slew with no
-steady state error, the small angle step response matches the analytic second
-order solution, magnetic dumping is shown to leave the along-field momentum
-untouched, and the wheel allocation reproduces any achievable commanded torque
-exactly.
+The three figures in this file are snapshots, regenerated by one command:
 
-Tier two is a recorded reference run in `tests/data/reference_run.json`, pinned
-with a tolerance rule per quantity. Only reproducible quantities are recorded:
-closed form values, converged aggregates, counts, and classifications. The
-inertial momentum drift is checked against a derived bound rather than pinned,
-because it is accumulated rounding and depends on the order a machine sums a dot
-product. The intermediate axis instability contributes only a qualitative
-signature and no trajectory number, because it is genuinely chaotic. Every
-tolerance is derived from how the quantity is computed, and the derivation is
-stated in the docstring beside it.
+```bash
+uv run python scripts/publish_figures.py
+```
 
-Tier three runs each `examples/` script as a subprocess under `--quick`.
+It writes `docs/figures/` at the deliberate size and resolution the 250 kilobyte
+budget was computed for, 814 by 506 pixels each, and prints the total against
+that budget. CI does not compare the committed images byte for byte, because
+matplotlib output is not byte reproducible across platforms: font hinting, the
+freetype version and the PNG encoder all differ between the Linux and Windows
+runners. What CI does check is that the files exist, are valid PNGs, fit the
+budget, are the size the budget assumes, and are referenced with real alt text
+from the documents that show them.
+
+## Layout
+
+Five layers, each importing only from the ones above it.
+
+| Layer | Contents | Rule it keeps |
+| --- | --- | --- |
+| `model/` | attitude representations and conversions, inertia and wheel geometry, Euler's equation with wheels, gravity gradient and dipole field | pure, no state and no input or output, every function testable against a closed form |
+| `algorithm/` | the controller protocol and the three laws, wheel allocation with null space steering and saturation, cross product unloading | maps a state to a command, never integrates |
+| `pipeline/` | fixed step RK4 with the closed form norm drift, scenario configuration and the runner | owns time, produces a trace without interpreting it |
+| `analysis/` | manoeuvre metrics, round trip residuals, text tables, figures | only reads traces |
+| `configuration.py`, `examples/`, `scripts/` | the reference vehicle, orbit and scenarios shared by examples and tests, then wiring with no logic of its own | the single place where numbers are chosen |
 
 ## References
 
@@ -372,7 +368,8 @@ Tier three runs each `examples/` script as a subprocess under `--quick`.
   Reference for the environmental torque models.
 - Wie, B. (2008). *Space Vehicle Dynamics and Control*, 2nd edition. AIAA.
   DOI [10.2514/4.860119](https://doi.org/10.2514/4.860119). Reference for wheel
-  allocation and redundancy resolution.
+  allocation, redundancy resolution, and the Routh-Hurwitz treatment of the
+  integral gain.
 - Alken, P. et al. (2021). International Geomagnetic Reference Field: the
   thirteenth generation. *Earth, Planets and Space*, 73, 49.
   DOI [10.1186/s40623-020-01288-x](https://doi.org/10.1186/s40623-020-01288-x).
@@ -387,11 +384,14 @@ Tier three runs each `examples/` script as a subprocess under `--quick`.
 - [Matplotlib](https://matplotlib.org/) 3.9 or later, Matplotlib licence, a
   BSD-compatible licence derived from the Python Software Foundation licence.
   Figures in the analysis layer.
-- [pytest](https://pytest.org/) 8.3 or later, MIT. Test runner.
+- [pytest](https://pytest.org/) 8.3 or later, MIT, with
+  [pytest-cov](https://pytest-cov.readthedocs.io/) 6.0 or later, MIT. Test runner
+  and coverage measurement.
 - [Ruff](https://docs.astral.sh/ruff/) 0.8 or later, MIT. Linting and import
   ordering.
 - [mypy](https://mypy-lang.org/) 1.13 or later, MIT. Static type checking in
-  strict mode over the package, the tests, and the examples.
+  strict mode over the package, the tests, the examples and the scripts. The
+  package ships `py.typed`, so the annotations reach anything that installs it.
 
 ## License
 

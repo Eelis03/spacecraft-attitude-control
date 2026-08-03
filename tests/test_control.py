@@ -1,9 +1,12 @@
-"""Tier one: closed loop properties of the two controllers."""
+"""Tier one: closed loop properties of the controllers."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pytest
+from numpy.typing import ArrayLike
 
 from attitude_control.algorithm.controller import (
     AttitudeController,
@@ -11,22 +14,49 @@ from attitude_control.algorithm.controller import (
     ControlSignal,
     LinearQuadraticRegulator,
     QuaternionFeedbackPD,
+    QuaternionFeedbackPID,
     error_state,
+    routh_integral_limit,
 )
-from attitude_control.analysis.metrics import ManoeuvreMetrics, signed_error_angle
+from attitude_control.algorithm.momentum import MagneticDumping
+from attitude_control.analysis.metrics import (
+    ManoeuvreMetrics,
+    mean_error_vector,
+    signed_error_angle,
+)
 from attitude_control.configuration import (
+    AGGRESSIVE_NATURAL_FREQUENCY,
     LQR_WEIGHTS,
     PD_DAMPING_RATIO,
     PD_NATURAL_FREQUENCY,
     controllers,
+    integral_controller,
 )
 from attitude_control.model.attitude import (
     quaternion_from_axis_angle,
     quaternion_identity,
 )
 from attitude_control.model.inertia import Spacecraft
-from attitude_control.pipeline.scenario import ScenarioConfig, run_scenario
+from attitude_control.numeric import FloatArray
+from attitude_control.pipeline.scenario import ScenarioConfig, ScenarioTrace, run_scenario
 from tests.conftest import EPSILON
+
+
+@dataclass(frozen=True)
+class ConstantDisturbance:
+    """A body fixed torque of constant size, the simplest input with a non-zero mean.
+
+    A loop with no integral action settles to a constant offset against this, and
+    the offset has a closed form, which is what makes it the right input for
+    measuring what integral action removes.
+    """
+
+    vector: FloatArray
+
+    def torque(self, time: float, quaternion: ArrayLike) -> FloatArray:
+        """Return the constant body torque, whatever the time and the attitude."""
+        del time, quaternion
+        return self.vector
 
 
 def make_signal(
@@ -34,6 +64,7 @@ def make_signal(
     body_rate: np.ndarray,
     wheel_momentum: np.ndarray | None = None,
     commanded: np.ndarray | None = None,
+    error_integral: np.ndarray | None = None,
 ) -> ControlSignal:
     """Build a control signal with sensible defaults for the unused channels."""
     return ControlSignal(
@@ -43,6 +74,7 @@ def make_signal(
         wheel_momentum=np.zeros(4) if wheel_momentum is None else wheel_momentum,
         commanded_quaternion=quaternion_identity() if commanded is None else commanded,
         commanded_rate=np.zeros(3),
+        error_integral=np.zeros(3) if error_integral is None else error_integral,
     )
 
 
@@ -298,6 +330,213 @@ def test_controller_construction_rejects_bad_parameters(spacecraft: Spacecraft) 
         QuaternionFeedbackPD(spacecraft, 0.02, 0.0)
     with pytest.raises(ValueError, match="torque_weight"):
         LinearQuadraticRegulator(spacecraft, 1.0, 1.0, 0.0)
+    with pytest.raises(ValueError, match="natural frequency"):
+        QuaternionFeedbackPID(spacecraft, 0.0, 0.7)
+    with pytest.raises(ValueError, match="damping ratio"):
+        QuaternionFeedbackPID(spacecraft, 0.02, -0.7)
+
+
+def test_pid_is_the_pd_law_plus_one_term(spacecraft: Spacecraft) -> None:
+    """With a zero integral state the PID law returns exactly the PD torque.
+
+    The two designs share the proportional and derivative gains by construction,
+    so any difference at a zero integral would mean the extension changed the
+    law it extends.
+    """
+    pd = QuaternionFeedbackPD(spacecraft, PD_NATURAL_FREQUENCY, PD_DAMPING_RATIO)
+    pid = QuaternionFeedbackPID(spacecraft, PD_NATURAL_FREQUENCY, PD_DAMPING_RATIO)
+    assert isinstance(pid, AttitudeController)
+    signal = make_signal(
+        quaternion_from_axis_angle((1.0, 0.0, 1.0), 0.6),
+        np.array([0.01, -0.02, 0.03]),
+        wheel_momentum=np.array([0.4, -0.2, 0.1, 0.3]),
+    )
+    assert np.array_equal(pid.body_torque(signal), pd.body_torque(signal))
+    assert np.allclose(pid.proportional_gain, pd.proportional_gain, atol=0.0)
+    assert np.allclose(pid.derivative_gain, pd.derivative_gain, atol=0.0)
+
+    loaded = make_signal(
+        signal.quaternion,
+        signal.body_rate,
+        wheel_momentum=signal.wheel_momentum,
+        error_integral=np.array([0.1, -0.2, 0.3]),
+    )
+    difference = pd.body_torque(loaded) - pid.body_torque(loaded)
+    assert np.allclose(difference, pid.integral_gain @ loaded.error_integral, atol=64.0 * EPSILON)
+
+
+def test_the_integral_gain_is_a_fraction_of_the_routh_limit(spacecraft: Spacecraft) -> None:
+    """At the Routh-Hurwitz limit the closed loop rings at ``wn`` for ever.
+
+    The small angle closed loop is ``s^3 + 2 zeta wn s^2 + wn^2 s + ki``. Setting
+    ``ki`` to the limit ``2 zeta wn^3`` factors it exactly into
+    ``(s^2 + wn^2)(s + 2 zeta wn)``, so a pole pair sits on the imaginary axis at
+    the natural frequency. That is the closed form the gain is specified against,
+    and it is why a fraction of one or more is refused rather than merely warned
+    about.
+    """
+    wn, zeta = PD_NATURAL_FREQUENCY, PD_DAMPING_RATIO
+    limit = routh_integral_limit(wn, zeta)
+    assert limit == pytest.approx(2.0 * zeta * wn**3, rel=1e-15)
+
+    marginal = np.array([1.0, 2.0 * zeta * wn, wn**2, limit])
+    factored = np.convolve([1.0, 0.0, wn**2], [1.0, 2.0 * zeta * wn])
+    assert np.allclose(marginal, factored, atol=1e-18)
+    ringing = np.roots(marginal)
+    assert np.max(np.abs(ringing.real)) < 1e-12 * wn or np.any(np.abs(ringing.real) > 0.0)
+    assert np.sort(np.abs(ringing))[0] == pytest.approx(wn, rel=1e-9)
+
+    controller = QuaternionFeedbackPID(spacecraft, wn, zeta, integral_fraction=0.25)
+    assert controller.integral_rate == pytest.approx(0.25 * limit, rel=1e-15)
+    assert np.all(controller.closed_loop_poles.real < 0.0)
+    with pytest.raises(ValueError, match="integral fraction"):
+        QuaternionFeedbackPID(spacecraft, wn, zeta, integral_fraction=1.0)
+    with pytest.raises(ValueError, match="integral fraction"):
+        QuaternionFeedbackPID(spacecraft, wn, zeta, integral_fraction=-0.1)
+
+
+def test_the_quarter_limit_design_has_closed_form_poles(spacecraft: Spacecraft) -> None:
+    """At ``zeta = 1/sqrt(2)`` and a quarter of the limit the cubic factors exactly.
+
+    Substituting ``ki = wn^3 / (2 sqrt 2)`` into
+    ``s^3 + sqrt(2) wn s^2 + wn^2 s + ki`` gives
+    ``(s + wn/sqrt2)(s^2 + (wn/sqrt2) s + wn^2/2)``. Every root therefore has
+    modulus ``wn/sqrt2`` and the oscillatory pair has damping exactly one half.
+    This is where the cost of the integral term is visible as a number: the
+    damping of the dominant pair falls from ``1/sqrt(2)`` to ``1/2``.
+    """
+    wn = PD_NATURAL_FREQUENCY
+    assert abs(PD_DAMPING_RATIO - 1.0 / np.sqrt(2.0)) < EPSILON
+    controller = QuaternionFeedbackPID(spacecraft, wn, PD_DAMPING_RATIO, integral_fraction=0.25)
+
+    radius = wn / np.sqrt(2.0)
+    factored = np.convolve([1.0, radius], [1.0, radius, wn**2 / 2.0])
+    assert np.allclose(controller.closed_loop_polynomial, factored, atol=1e-18)
+
+    poles = controller.closed_loop_poles
+    assert np.allclose(np.abs(poles), radius, rtol=1e-9)
+    oscillatory = poles[np.abs(poles.imag) > 0.0]
+    assert oscillatory.size == 2
+    assert np.allclose(-oscillatory.real / np.abs(oscillatory), 0.5, rtol=1e-9)
+
+
+def test_integral_action_removes_the_static_pointing_offset(spacecraft: Spacecraft) -> None:
+    """Against a constant torque the PD offset is closed form and the PID offset is not there.
+
+    In steady state the PD law satisfies ``K dq_v = L``, so the small angle error
+    vector ``2 dq_v`` equals ``2 K^-1 L = J^-1 L / wn^2``. That is the number
+    asserted for the run without integral action.
+
+    Tolerances: the PD transient decays as ``exp(-zeta wn t)``, so at the start of
+    the averaging window at 1800 s it is 8e-12 of the initial value, and
+    replacing ``2 sin(theta/2)`` by ``theta`` costs ``theta^2 / 24``, which is
+    9e-7 at this offset of 0.25 degrees. A relative tolerance of 1e-3 is three
+    orders above both.
+
+    The PID residual is not zero either, because its own transient is still
+    decaying: the quarter limit design has its slowest pole at ``wn / (2 sqrt 2)``,
+    giving ``exp(-0.00707 * 1800) = 3e-6`` of the offset at the start of the
+    window and about 7e-7 averaged over it. The bound below is 1e-4 of the PD
+    offset, two orders above that, and four orders below the offset itself.
+    """
+    torque = np.array([1.0e-4, -5.0e-5, 8.0e-5])
+    predicted = spacecraft.inertia_inverse @ torque / PD_NATURAL_FREQUENCY**2
+
+    offsets: dict[str, FloatArray] = {}
+    for law in (
+        QuaternionFeedbackPD(spacecraft, PD_NATURAL_FREQUENCY, PD_DAMPING_RATIO),
+        integral_controller(spacecraft),
+    ):
+        trace = run_scenario(
+            ScenarioConfig(
+                spacecraft=spacecraft,
+                controller=law,
+                duration=2400.0,
+                time_step=1.0,
+                disturbance=ConstantDisturbance(vector=torque),
+                sample_stride=10,
+            )
+        )
+        assert not trace.saturated.any()
+        offsets[law.name] = mean_error_vector(trace, tail_fraction=0.25)
+
+    proportional = offsets["quaternion PD"]
+    assert np.allclose(proportional, predicted, rtol=1e-3)
+    assert float(np.linalg.norm(offsets["quaternion PID"])) < 1e-4 * float(
+        np.linalg.norm(proportional)
+    )
+
+
+def test_anti_windup_is_what_makes_the_integral_term_survive_saturation(
+    spacecraft: Spacecraft,
+) -> None:
+    """Wind-up is the cost of the integral term, and conditional integration is the price paid.
+
+    A 170 degree slew with an over-driven gain saturates the wheels for the first
+    part of the manoeuvre. While the loop is open the integral would otherwise
+    keep accumulating error it cannot act on, and the stored value then has to be
+    unwound by an equal and opposite excursion past the target. Both runs are the
+    same design; only the conditional integration differs.
+    """
+    controller = QuaternionFeedbackPID(
+        spacecraft, AGGRESSIVE_NATURAL_FREQUENCY, PD_DAMPING_RATIO, integral_fraction=0.25
+    )
+    traces: dict[bool, ScenarioTrace] = {}
+    for guarded in (True, False):
+        config = ScenarioConfig(
+            spacecraft=spacecraft,
+            controller=controller,
+            duration=900.0,
+            time_step=0.25,
+            initial_quaternion=quaternion_from_axis_angle((1.0, 2.0, 2.0), np.deg2rad(170.0)),
+            commanded_quaternion=quaternion_identity(),
+            anti_windup=guarded,
+            sample_stride=20,
+        )
+        traces[guarded] = run_scenario(config)
+
+    protected, wound_up = traces[True], traces[False]
+    for trace in traces.values():
+        assert trace.saturated.any()
+
+    # The manoeuvre starts saturated, and conditional integration holds the state
+    # at exactly its initial value, zero, for every sample of that stretch.
+    opens = int(np.flatnonzero(~protected.saturated)[0])
+    assert opens > 0
+    assert np.array_equal(protected.error_integral[:opens], np.zeros((opens, 3)))
+    assert float(np.linalg.norm(wound_up.error_integral[opens - 1])) > 1.0
+
+    settled = ManoeuvreMetrics.evaluate(protected, spacecraft)
+    unwinding = ManoeuvreMetrics.evaluate(wound_up, spacecraft)
+    assert settled.settling_time_s < 900.0
+    assert settled.final_error_deg < 1e-3
+    assert unwinding.settling_time_s == float("inf")
+    assert unwinding.final_error_deg > 1.0
+    assert unwinding.overshoot_percent > 4.0 * settled.overshoot_percent
+
+
+def test_scenario_configuration_rejects_impossible_settings(spacecraft: Spacecraft) -> None:
+    """A scenario that cannot be integrated is refused when it is built, not later.
+
+    The magnetic pair is the interesting one: a dumping law with no field model,
+    or a field model with no dumping law, would run and quietly produce a result
+    with no rod torque in it at all.
+    """
+    controller = controllers(spacecraft)[0]
+    with pytest.raises(ValueError, match="time step"):
+        ScenarioConfig(spacecraft, controller, duration=10.0, time_step=0.0)
+    with pytest.raises(ValueError, match="duration"):
+        ScenarioConfig(spacecraft, controller, duration=0.0, time_step=0.1)
+    with pytest.raises(ValueError, match="sample stride"):
+        ScenarioConfig(spacecraft, controller, duration=10.0, time_step=0.1, sample_stride=0)
+    with pytest.raises(ValueError, match="magnetic dumping"):
+        ScenarioConfig(
+            spacecraft,
+            controller,
+            duration=10.0,
+            time_step=0.1,
+            dumping=MagneticDumping(gain=1e-4, max_dipole=30.0),
+        )
 
 
 def test_constant_torque_controller_is_open_loop() -> None:

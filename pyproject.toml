@@ -10,10 +10,10 @@ keywords = ["spacecraft", "attitude-control", "quaternion", "lqr", "python"]
 dependencies = ["numpy>=2.0", "scipy>=1.14", "matplotlib>=3.9"]
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.8", "mypy>=1.13"]
+dev = ["pytest>=8.3", "pytest-cov>=6.0", "ruff>=0.8", "mypy>=1.13"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3", "ruff>=0.8", "mypy>=1.13"]
+dev = ["pytest>=8.3", "pytest-cov>=6.0", "ruff>=0.8", "mypy>=1.13"]
 
 [build-system]
 requires = ["hatchling"]
@@ -36,7 +36,7 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src/attitude_control", "tests", "examples"]
+files = ["src/attitude_control", "tests", "examples", "scripts"]
 
 # SciPy ships no type information for the LAPACK wrappers used by the LQR design.
 # The single call site annotates the result explicitly, so nothing is lost.

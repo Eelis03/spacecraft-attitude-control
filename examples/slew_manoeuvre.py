@@ -1,4 +1,9 @@
-"""Compare quaternion PD and LQR on the same rest to rest slew.
+"""Compare the control laws on the same rest to rest slew.
+
+The two designs compared at matched bandwidth are the first two rows. The
+over-driven design is there to exercise wheel torque saturation, and the PID
+design is there to show what its integral term costs on a manoeuvre where no
+disturbance acts and there is therefore nothing for it to remove.
 
 Run with ``--quick`` for the shortened version used by the integration tests.
 
@@ -15,6 +20,7 @@ from attitude_control.analysis.report import metrics_table
 from attitude_control.configuration import (
     aggressive_controller,
     controllers,
+    integral_controller,
     reference_spacecraft,
     slew_scenario,
 )
@@ -38,7 +44,11 @@ def main() -> None:
     duration = 200.0 if options.quick else 900.0
     step = 0.5 if options.quick else 0.2
 
-    laws = [*controllers(spacecraft), aggressive_controller(spacecraft)]
+    laws = [
+        *controllers(spacecraft),
+        aggressive_controller(spacecraft),
+        integral_controller(spacecraft),
+    ]
     traces = [
         run_scenario(slew_scenario(spacecraft, law, duration=duration, time_step=step))
         for law in laws

@@ -145,8 +145,8 @@ def gyroscopic_torque(
     """Return ``w x (J w + W h_w)``, the term that couples the body axes.
 
     Feeding the negative of this back as a control term cancels the coupling
-    exactly and leaves a linear plant, which is why both controllers in this
-    package offer it as a feedforward option.
+    exactly and leaves a linear plant, which is why every controller in this
+    package offers it as a feedforward option.
     """
     rate = as_vector(body_rate, 3)
     return np.cross(rate, body_angular_momentum(spacecraft, rate, wheel_momentum))

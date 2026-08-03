@@ -46,6 +46,25 @@ stabilising solution of the continuous algebraic Riccati equation
 products of inertia the resulting gain is not diagonal, so the LQR couples the
 axes where the PD law does not.
 
+Quaternion feedback PID
+-----------------------
+Neither law above integrates the error, so a disturbance torque with a non-zero
+mean leaves a constant offset equal to that torque divided by the static loop
+gain. :class:`QuaternionFeedbackPID` adds the missing term,
+
+    L = -K dq_v - P w - I x,    x_dot = dq_v
+
+With the same inertia-scaled gains and ``I = 2 ki J`` the small angle closed loop
+becomes, on every axis independently,
+
+    theta''' + 2 zeta wn theta'' + wn^2 theta' + ki theta = 0
+
+The Routh-Hurwitz condition for that cubic is ``ki < 2 zeta wn^3``, and at the
+bound the polynomial factors exactly as ``(s^2 + wn^2)(s + 2 zeta wn)``, so the
+closed loop oscillates forever at the natural frequency. The integral gain is
+therefore specified as a fraction of that bound rather than as an absolute
+number, and a fraction of one or more is refused.
+
 Both controllers accept an optional feedforward of the gyroscopic term
 ``w x (J w + W h_w)``. When it is enabled the closed loop is exactly the linear
 system above rather than an approximation of it.
@@ -85,13 +104,21 @@ __all__ = [
     "ControlSignal",
     "LinearQuadraticRegulator",
     "QuaternionFeedbackPD",
+    "QuaternionFeedbackPID",
     "error_state",
+    "routh_integral_limit",
 ]
 
 
 @dataclass(frozen=True, slots=True)
 class ControlSignal:
-    """Everything a controller is allowed to see at one instant."""
+    """Everything a controller is allowed to see at one instant.
+
+    ``error_integral`` is the running integral of the error quaternion vector
+    part, propagated by the scenario runner alongside the plant. It defaults to
+    zero so that a controller with no integral term can be evaluated from a bare
+    measurement, which is how every unit test builds a signal.
+    """
 
     time: float
     quaternion: FloatArray
@@ -99,6 +126,7 @@ class ControlSignal:
     wheel_momentum: FloatArray
     commanded_quaternion: FloatArray
     commanded_rate: FloatArray
+    error_integral: FloatArray = field(default_factory=lambda: np.zeros(3))
 
 
 @runtime_checkable
@@ -177,6 +205,117 @@ class QuaternionFeedbackPD:
         """Return the commanded body torque in N m."""
         error_vector, error_rate = error_state(signal)
         torque = -(self.proportional_gain @ error_vector) - self.derivative_gain @ error_rate
+        if self.feedforward:
+            torque = torque + gyroscopic_torque(
+                self.spacecraft, signal.body_rate, signal.wheel_momentum
+            )
+        return torque
+
+
+def routh_integral_limit(natural_frequency: float, damping_ratio: float) -> float:
+    """Return the largest integral gain ``ki`` the PD design can carry, in 1/s^3.
+
+    The small angle closed loop of the PID law is
+    ``theta''' + 2 zeta wn theta'' + wn^2 theta' + ki theta = 0``. For a cubic
+    ``s^3 + a2 s^2 + a1 s + a0`` the Routh-Hurwitz condition is ``a2 a1 > a0``,
+    which here is ``ki < 2 zeta wn^3``. At equality the polynomial factors as
+    ``(s^2 + wn^2)(s + 2 zeta wn)``: the closed loop is marginally stable and
+    rings at the natural frequency for ever.
+    """
+    return 2.0 * damping_ratio * natural_frequency**3
+
+
+@dataclass(frozen=True, slots=True)
+class QuaternionFeedbackPID:
+    """Quaternion feedback with proportional, integral, and derivative action.
+
+    The proportional and derivative gains are those of :class:`QuaternionFeedbackPD`,
+    so this design is that one plus a term. The integral gain is given as a
+    fraction of the Routh-Hurwitz stability limit returned by
+    :func:`routh_integral_limit`, because the absolute value that is safe depends
+    on both the bandwidth and the damping and is easy to exceed by accident.
+
+    Parameters
+    ----------
+    spacecraft:
+        Supplies the inertia tensor used to scale all three gains.
+    natural_frequency, damping_ratio:
+        The PD design this law extends, in rad/s and dimensionless.
+    integral_fraction:
+        Integral gain as a fraction of the stability limit, in ``[0, 1)``.
+    feedforward:
+        Cancel ``w x (J w + W h_w)`` when True.
+
+    The integral state itself lives in the scenario runner, not here, so this
+    class stays a pure function of the signal it is given and can be evaluated
+    twice at the same instant without side effects.
+    """
+
+    spacecraft: Spacecraft
+    natural_frequency: float
+    damping_ratio: float
+    integral_fraction: float = 0.25
+    feedforward: bool = True
+    label: str = "quaternion PID"
+    proportional_gain: FloatArray = field(init=False)
+    derivative_gain: FloatArray = field(init=False)
+    integral_gain: FloatArray = field(init=False)
+    integral_rate: float = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.natural_frequency <= 0.0:
+            raise ValueError("natural frequency must be positive")
+        if self.damping_ratio <= 0.0:
+            raise ValueError("damping ratio must be positive")
+        if not 0.0 <= self.integral_fraction < 1.0:
+            raise ValueError(
+                "integral fraction must lie in [0, 1); at one the Routh-Hurwitz "
+                "limit is reached and the closed loop is only marginally stable"
+            )
+        inertia = self.spacecraft.inertia
+        rate = self.integral_fraction * routh_integral_limit(
+            self.natural_frequency, self.damping_ratio
+        )
+        object.__setattr__(self, "integral_rate", rate)
+        object.__setattr__(self, "proportional_gain", 2.0 * self.natural_frequency**2 * inertia)
+        object.__setattr__(
+            self,
+            "derivative_gain",
+            2.0 * self.damping_ratio * self.natural_frequency * inertia,
+        )
+        object.__setattr__(self, "integral_gain", 2.0 * rate * inertia)
+
+    @property
+    def name(self) -> str:
+        """Short label used in reports and figures."""
+        return self.label
+
+    @property
+    def closed_loop_polynomial(self) -> FloatArray:
+        """Coefficients of the small angle closed loop cubic, highest power first."""
+        return np.array(
+            [
+                1.0,
+                2.0 * self.damping_ratio * self.natural_frequency,
+                self.natural_frequency**2,
+                self.integral_rate,
+            ],
+            dtype=np.float64,
+        )
+
+    @property
+    def closed_loop_poles(self) -> ComplexArray:
+        """Roots of :attr:`closed_loop_polynomial`, in rad/s."""
+        return np.asarray(np.roots(self.closed_loop_polynomial), dtype=np.complex128)
+
+    def body_torque(self, signal: ControlSignal) -> FloatArray:
+        """Return the commanded body torque in N m."""
+        error_vector, error_rate = error_state(signal)
+        torque = (
+            -(self.proportional_gain @ error_vector)
+            - self.derivative_gain @ error_rate
+            - self.integral_gain @ as_vector(signal.error_integral, 3)
+        )
         if self.feedforward:
             torque = torque + gyroscopic_torque(
                 self.spacecraft, signal.body_rate, signal.wheel_momentum

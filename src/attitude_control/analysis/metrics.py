@@ -18,6 +18,10 @@ the definitions match.
 * **Momentum drift** is the largest change in the inertial frame total angular
   momentum over the run. With no external torque it should stay at the level of
   the integrator error, so it doubles as a correctness monitor on every run.
+* **Mean error vector** is the time average of the small angle attitude error
+  over the tail of a run. It is a vector average, not an average of magnitudes,
+  which is the only version that distinguishes a constant pointing offset from a
+  zero mean oscillation of the same size.
 """
 
 from __future__ import annotations
@@ -31,7 +35,13 @@ from attitude_control.model.inertia import Spacecraft
 from attitude_control.numeric import FloatArray
 from attitude_control.pipeline.scenario import ScenarioTrace
 
-__all__ = ["ManoeuvreMetrics", "momentum_drift", "settling_time", "signed_error_angle"]
+__all__ = [
+    "ManoeuvreMetrics",
+    "mean_error_vector",
+    "momentum_drift",
+    "settling_time",
+    "signed_error_angle",
+]
 
 
 def signed_error_angle(trace: ScenarioTrace) -> FloatArray:
@@ -62,6 +72,26 @@ def settling_time(trace: ScenarioTrace, threshold: float) -> float:
     if last + 1 >= trace.time.size:
         return float("inf")
     return float(trace.time[last + 1])
+
+
+def mean_error_vector(trace: ScenarioTrace, tail_fraction: float = 0.5) -> FloatArray:
+    """Return the time averaged attitude error over the tail of a run, in rad.
+
+    The quantity averaged is ``2 dq_v``, which equals the principal rotation
+    vector to first order. The average runs over the last ``tail_fraction`` of
+    the samples, so an initial transient does not contaminate it.
+
+    A proportional plus derivative loop under a disturbance with a non-zero mean
+    settles to a constant offset, and this average returns that offset. A loop
+    with integral action settles to a zero mean oscillation about the command, and
+    this average returns approximately zero while the mean of the error
+    *magnitude* stays at the amplitude of the oscillation.
+    """
+    if not 0.0 < tail_fraction <= 1.0:
+        raise ValueError("tail fraction must lie in (0, 1]")
+    errors = trace.error_quaternion()
+    start = int(errors.shape[0] * (1.0 - tail_fraction))
+    return np.asarray(2.0 * np.mean(errors[start:, 1:], axis=0), dtype=np.float64)
 
 
 def momentum_drift(trace: ScenarioTrace) -> float:

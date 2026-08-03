@@ -9,6 +9,21 @@ constant over a step. The closed loop is therefore a continuous time system
 integrated by RK4, which is what makes the small angle response comparable with
 the analytic second order prediction. Sampled data effects, computation delay,
 and sensor noise are outside the scope of this package; see the design notes.
+
+Controller state
+----------------
+One controller state is propagated here rather than inside a controller: the
+integral of the error quaternion vector part, ``x_dot = dq_v``. It lives in the
+runner because it is a state of the closed loop and belongs with the other
+states, integrated by the same RK4 step rather than by a rectangle rule bolted on
+between steps. Controllers with no integral term read ``x`` and ignore it, so
+their trajectories are unchanged by its presence.
+
+Anti-windup is conditional integration: while the wheel allocation is saturated
+the integral derivative is held at zero, so the state cannot grow during an
+interval in which the loop is open. The alternative, letting it grow and
+subtracting the excess afterwards, needs a second gain to tune and buys nothing
+here because the saturation is a hard limit rather than a rate limit.
 """
 
 from __future__ import annotations
@@ -21,7 +36,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from attitude_control.algorithm.allocation import Allocation, allocate
-from attitude_control.algorithm.controller import AttitudeController, ControlSignal
+from attitude_control.algorithm.controller import AttitudeController, ControlSignal, error_state
 from attitude_control.algorithm.momentum import MagneticDumping
 from attitude_control.model.attitude import (
     attitude_error,
@@ -91,6 +106,10 @@ class ScenarioConfig:
         Redundancy resolution for the wheel array.
     enforce_wheel_limits:
         Apply the wheel torque and momentum limits when True.
+    anti_windup:
+        Freeze the error integral while the wheel allocation is saturated. Only
+        a controller with an integral term is affected. Setting it to False is
+        how the tests measure what wind-up costs.
     sample_stride:
         Record one sample every ``sample_stride`` steps, to keep traces small for
         long runs. The first and last steps are always recorded.
@@ -114,6 +133,7 @@ class ScenarioConfig:
     null_space_gain: float = 0.0
     target_wheel_momentum: FloatArray | None = None
     enforce_wheel_limits: bool = True
+    anti_windup: bool = True
     sample_stride: int = 1
     label: str = ""
 
@@ -169,6 +189,7 @@ class ScenarioTrace:
     dipole: FloatArray
     stored_body_momentum: FloatArray
     inertial_momentum: FloatArray
+    error_integral: FloatArray
     saturated: BoolArray
     commanded_quaternion: FloatArray
 
@@ -210,6 +231,11 @@ def run_scenario(config: ScenarioConfig) -> ScenarioTrace:
     commanded_quaternion = quaternion_normalise(config.commanded_quaternion)
     commanded_rate = as_vector(config.commanded_rate, 3)
     step = config.time_step
+    plant_size = 7 + wheels.count
+
+    def split(packed: FloatArray) -> tuple[PlantState, FloatArray]:
+        """Separate the plant state from the trailing error integral."""
+        return PlantState.unflatten(packed[:plant_size]), packed[plant_size:]
 
     def environment(time: float, state: PlantState) -> tuple[FloatArray, FloatArray, FloatArray]:
         """Return the external torque, the body field, and the commanded dipole."""
@@ -225,8 +251,10 @@ def run_scenario(config: ScenarioConfig) -> ScenarioTrace:
             external = external + magnetic_torque(dipole, field_body)
         return external, field_body, dipole
 
-    def control(time: float, state: PlantState) -> tuple[FloatArray, Allocation]:
-        """Return the commanded body torque and the wheel allocation that realises it."""
+    def control(
+        time: float, state: PlantState, integral: FloatArray
+    ) -> tuple[FloatArray, Allocation, FloatArray]:
+        """Return the torque command, the wheel allocation, and the integral derivative."""
         signal = ControlSignal(
             time=time,
             quaternion=state.quaternion,
@@ -234,6 +262,7 @@ def run_scenario(config: ScenarioConfig) -> ScenarioTrace:
             wheel_momentum=state.wheel_momentum,
             commanded_quaternion=commanded_quaternion,
             commanded_rate=commanded_rate,
+            error_integral=integral,
         )
         command = config.controller.body_torque(signal)
         allocation = allocate(
@@ -244,16 +273,20 @@ def run_scenario(config: ScenarioConfig) -> ScenarioTrace:
             target_momentum=config.target_wheel_momentum,
             enforce_limits=config.enforce_wheel_limits,
         )
-        return command, allocation
+        integral_rate = error_state(signal)[0]
+        if config.anti_windup and allocation.saturated:
+            integral_rate = np.zeros(3, dtype=np.float64)
+        return command, allocation, integral_rate
 
     def derivative(time: float, packed: FloatArray) -> FloatArray:
-        state = PlantState.unflatten(packed)
+        state, integral = split(packed)
         external, _, _ = environment(time, state)
-        _, allocation = control(time, state)
-        return state_derivative(spacecraft, state, allocation.wheel_torque, external)
+        _, allocation, integral_rate = control(time, state, integral)
+        plant = state_derivative(spacecraft, state, allocation.wheel_torque, external)
+        return np.concatenate((plant, integral_rate))
 
     state = config.initial_state()
-    packed = state.flatten()
+    packed = np.concatenate((state.flatten(), np.zeros(3, dtype=np.float64)))
 
     times: list[float] = []
     quaternions: list[FloatArray] = []
@@ -267,16 +300,17 @@ def run_scenario(config: ScenarioConfig) -> ScenarioTrace:
     dipoles: list[FloatArray] = []
     stored: list[FloatArray] = []
     inertial: list[FloatArray] = []
+    integrals: list[FloatArray] = []
     saturation: list[bool] = []
 
     total_steps = config.steps
     for index in range(total_steps + 1):
         time = index * step
-        state = PlantState.unflatten(packed)
+        state, integral = split(packed)
 
         if index % config.sample_stride == 0 or index == total_steps:
             external, field_body, dipole = environment(time, state)
-            command, allocation = control(time, state)
+            command, allocation, _ = control(time, state, integral)
             times.append(time)
             quaternions.append(state.quaternion.copy())
             rates.append(state.body_rate.copy())
@@ -293,6 +327,7 @@ def run_scenario(config: ScenarioConfig) -> ScenarioTrace:
                     spacecraft, state.quaternion, state.body_rate, state.wheel_momentum
                 )
             )
+            integrals.append(integral.copy())
             saturation.append(allocation.saturated)
 
         if index == total_steps:
@@ -313,6 +348,7 @@ def run_scenario(config: ScenarioConfig) -> ScenarioTrace:
         dipole=_stack(dipoles),
         stored_body_momentum=_stack(stored),
         inertial_momentum=_stack(inertial),
+        error_integral=_stack(integrals),
         saturated=np.array(saturation, dtype=bool),
         commanded_quaternion=commanded_quaternion,
     )

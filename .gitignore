@@ -10,4 +10,6 @@ build/
 *.egg-info/
 outputs/
 .DS_Store
-figures/
+# Scratch output of the example scripts. The published figures live in
+# docs/figures and are tracked, so only the top level directory is ignored.
+/figures/

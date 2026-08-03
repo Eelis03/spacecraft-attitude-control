@@ -29,8 +29,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
+      # Measured at 99.07 per cent locally. The gate is two points below the
+      # measurement rounded down, which leaves room for a platform difference in
+      # a branch or two without leaving room for a test to be deleted.
       - name: Run tests
-        run: uv run pytest -q
+        run: uv run pytest -q --cov=src/attitude_control --cov-report=term-missing --cov-fail-under=97
 
       - name: Lint
         run: uv run ruff check .

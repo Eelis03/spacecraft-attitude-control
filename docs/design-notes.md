@@ -63,7 +63,7 @@ acts on the wheel, so `h_w_dot = u` and the torque delivered to the body is
 `-W u`. Every allocation and dynamics sign in the package follows from that one
 line, which is stated at the top of `model/dynamics.py`.
 
-### Control: two laws behind one protocol
+### Control: three laws behind one protocol
 
 Quaternion feedback PD was chosen as the baseline because it has a proof and the
 proof needs no plant model. Wie, Weiss and Arapostathis (1989) exhibit a Lyapunov
@@ -96,11 +96,38 @@ That is checked against the formula in `test_lqr_attitude_gain_has_a_closed_form
 rather than against a recorded number, which is the right way to pin a value that
 a solver happens to produce.
 
-Both laws offer a feedforward of `w x (J w + W h_w)`. With it enabled the closed
-loop is exactly the linear system the designs assume, which is what makes the
-linear prediction test meaningful; without it the coupling remains and the
-response degrades gracefully. The comparison in the results uses it on both, so
-the only difference between the two runs is the gain matrix.
+The third law is the PD design with an integral term, added to close the
+limitation recorded below under limitations closed. Its gain is specified as a
+fraction of a stability limit rather than as an absolute number, because the
+value that is safe is set by both the bandwidth and the damping and there is a
+closed form for it. Writing the small angle closed loop of
+
+    L = -K dq_v - P w - I x,    x_dot = dq_v,    I = 2 ki J
+
+as `theta''' + 2 zeta wn theta'' + wn^2 theta' + ki theta = 0`, the
+Routh-Hurwitz condition on the cubic is `ki < 2 zeta wn^3`, and at equality the
+polynomial factors exactly as `(s^2 + wn^2)(s + 2 zeta wn)`, so the loop rings at
+the natural frequency for ever. The design uses a quarter of that limit, and at
+`zeta = 1/sqrt(2)` a quarter is a second closed form: the cubic factors as
+`(s + wn/sqrt2)(s^2 + (wn/sqrt2) s + wn^2/2)`, every pole has modulus
+`wn/sqrt2 = 0.01414` rad/s, and the oscillatory pair has damping exactly one
+half. Both factorisations are asserted in `test_control.py` rather than being
+compared against recorded poles.
+
+Wind-up is handled by conditional integration: while the wheel allocation is
+saturated the integral derivative is held at zero. Back-calculation was rejected
+because it needs a second gain with no principled value here, and because the
+saturation being modelled is a hard limit rather than a rate limit, so there is
+nothing to bleed the excess into. The integral state itself lives in the scenario
+runner, not in the controller, so that it is integrated by the same RK4 step as
+the plant instead of by a rectangle rule between steps, and so that the
+controller stays a pure function of the signal it is handed.
+
+All three laws offer a feedforward of `w x (J w + W h_w)`. With it enabled the
+closed loop is exactly the linear system the designs assume, which is what makes
+the linear prediction test meaningful; without it the coupling remains and the
+response degrades gracefully. The comparison in the results uses it on all of
+them, so the only difference between the runs is the gain matrix.
 
 ### Allocation: minimum norm with null space steering
 
@@ -222,6 +249,68 @@ the closed form drift analysis that anchors the norm test only exists for a fixe
 step. An integrator that preserves the unit norm exactly was rejected for the
 reason given above: it would have made the drift invisible.
 
+## Limitations closed
+
+### The controllers have no integral action
+
+This entry used to read: neither law integrates the attitude error, so a constant
+disturbance torque produces a constant offset equal to the static loop gain
+divided into it, visible in the gravity gradient results at roughly 200 arcsec.
+It is now closed by `QuaternionFeedbackPID`, and the results report all three
+laws on the same run so that the trade is visible rather than asserted.
+
+**What it removed.** The static offset. Measured as the time average of the error
+*vector* over the second half of a two orbit hold, which is the quantity that
+distinguishes a constant offset from a zero mean oscillation, the residual falls
+from 144.80 arcsec for the PD design and 128.56 for the LQR to 0.09 arcsec, a
+factor of 1600. The mean error magnitude falls from 190.3 to 46.3 arcsec and the
+peak from 292.2 to 126.5 arcsec. What is left at 46 arcsec is the periodic part
+of the gravity gradient torque, which no integrator can remove; the error vector
+now traces a small circle at the orbital rate instead of sitting still off
+target.
+
+**What it cost.** Four things, all measured rather than estimated.
+
+* Transient quality on a manoeuvre. On the reference 60 degree slew the PID
+  design overshoots 43.13 per cent against 4.16 for the PD design and settles in
+  870 s against 470, because the integral accumulates during the approach and
+  has to be unwound. It also asks for 29 per cent more wheel speed, 1177 rpm
+  against 912, and holds 1.10 N m s of momentum at the peak against 0.85. This
+  is why the integral design is offered beside the PD design rather than
+  replacing it: the slew and the hold want different laws.
+* Stability margin. The design is a cubic rather than a quadratic and can be made
+  unstable by the integral gain alone. The gain is therefore expressed as a
+  fraction of the Routh-Hurwitz limit `2 zeta wn^3`, a fraction of one or more is
+  refused by the constructor, and at the quarter used here the damping of the
+  dominant pole pair falls from `1/sqrt(2)` to exactly `1/2`.
+* Wind-up, and the code that handles it. Under saturation an unguarded integral
+  is not a degradation but a failure: on the same over-driven 170 degree slew it
+  overshoots 104 per cent instead of 25, never settles inside 900 s, and finishes
+  120 degrees from the target instead of 4e-5 degrees. Those four numbers are
+  observations of a saturated nonlinear run, so the test asserts the ordering and
+  the qualitative outcome rather than the values. Conditional integration costs
+  one flag on the scenario, one branch in the runner, and a derivative that is
+  now discontinuous at the saturation boundary.
+* One extra state in every run. The integral is propagated by the scenario runner
+  for every scenario, including those whose controller ignores it. The cost is
+  three floating point numbers per step and one slice in the derivative function;
+  the benefit is that the state is integrated by RK4 like everything else.
+
+**What remains.** Three things.
+
+* The periodic residual. Removing the once per orbit component needs a
+  disturbance observer, a repetitive controller tuned at the orbital frequency,
+  or a feedforward of the gravity gradient torque computed from the known
+  attitude and orbit. All three are larger changes than an integral term and none
+  is attempted here.
+* Integral limits. The state is frozen under saturation but not clamped, so a
+  long enough interval of unsaturated error with no authority to correct it, for
+  example a wheel array at its momentum limit rather than its torque limit, could
+  still grow it further than any real implementation would allow.
+* The gain is fixed. A design that scheduled the integral gain against the
+  manoeuvre size would avoid paying the slew overshoot at all, which is the
+  standard answer to the trade recorded above and is not implemented.
+
 ## Known limitations
 
 ### Sensor noise and estimation are out of scope
@@ -232,9 +321,12 @@ hides three things that dominate real pointing budgets. First, the derivative te
 of the PD law would amplify rate noise directly, so the achievable damping in
 flight is set by the gyroscope noise floor rather than by the desired `zeta`.
 Second, an estimator introduces phase lag that eats gain margin, so the natural
-frequency that is safe here is optimistic. Third, the 200 arcsec residuals reported
-under gravity gradient are a control limitation only; a real budget would add
-estimation error on top of them. Adding a multiplicative extended Kalman filter and
+frequency that is safe here is optimistic, and it eats more of it now that the
+loop carries an integral term. Third, the pointing residuals reported under
+gravity gradient, 190 arcsec without integral action and 46 with it, are a
+control limitation only; a real budget would add estimation error on top of them,
+and at 46 arcsec the estimator would be the larger of the two contributions for
+most star tracker classes. Adding a multiplicative extended Kalman filter and
 a noise model would remove this limitation and would roughly double the size of the
 package.
 
@@ -252,17 +344,6 @@ extended by a lightly damped appendage ringing after the slew, and cannot show t
 gain and phase margin lost to a mode inside the loop. A hybrid coordinate model
 with modal participation factors, as in Hughes (2004) chapter 5, would be the way to
 remove this, and it would change the over-driven result most.
-
-### The controllers have no integral action
-
-Neither law integrates the attitude error, so a constant disturbance torque
-produces a constant offset equal to the static loop gain divided into it. The
-gravity gradient results show this directly at roughly 200 arcsec. Adding an
-integral term, or better a disturbance observer, would remove the offset at the cost
-of an extra state and of wind-up behaviour under saturation. This was left out
-deliberately: it makes the disturbance rejection result an honest measurement of
-what a proportional plus derivative structure achieves, rather than a measurement of
-how well an integrator was tuned.
 
 ### The control law is continuous time
 

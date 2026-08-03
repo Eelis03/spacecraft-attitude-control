@@ -21,7 +21,9 @@ from attitude_control.algorithm.controller import (
     ControlSignal,
     LinearQuadraticRegulator,
     QuaternionFeedbackPD,
+    QuaternionFeedbackPID,
     error_state,
+    routh_integral_limit,
 )
 from attitude_control.algorithm.momentum import (
     MagneticDumping,
@@ -38,6 +40,7 @@ __all__ = [
     "LinearQuadraticRegulator",
     "MagneticDumping",
     "QuaternionFeedbackPD",
+    "QuaternionFeedbackPID",
     "allocate",
     "apply_limits",
     "controllable_momentum",
@@ -46,5 +49,6 @@ __all__ = [
     "error_state",
     "minimum_norm_wheel_torque",
     "null_space_wheel_torque",
+    "routh_integral_limit",
     "uncontrollable_momentum",
 ]

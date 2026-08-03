@@ -2,6 +2,17 @@
 
 The non-interactive Agg backend is selected before pyplot is imported, so the
 example scripts run identically with or without a display.
+
+Size and resolution
+-------------------
+Every figure is two panels at ``(7.4, 4.6)`` inches and 110 dots per inch, which
+is 814 by 506 pixels. The choice is deliberate rather than a default. The three
+published figures are tracked in the repository and share a 250 kilobyte budget,
+so each one has about 80 kilobytes to spend; a line plot of this size lands near
+50, while the matplotlib default of 100 dots per inch at a four panel layout
+lands near 150 and would need either a compression dependency or a third of the
+figures dropped. Nothing here is a raster of data, so the resolution only has to
+carry the axis labels legibly.
 """
 
 from __future__ import annotations
@@ -26,8 +37,8 @@ from attitude_control.pipeline.scenario import ScenarioTrace
 
 __all__ = ["plot_disturbance", "plot_dumping", "plot_slew_comparison"]
 
-_FIGURE_SIZE = (9.0, 7.0)
-_DPI = 130
+_FIGURE_SIZE = (7.4, 4.6)
+_DPI = 110
 
 
 def _finish(figure: Figure, destination: Path) -> Path:
@@ -43,59 +54,61 @@ def plot_slew_comparison(
     spacecraft: Spacecraft,
     destination: Path,
 ) -> Path:
-    """Plot error angle, body rate, wheel speed, and wheel torque for each trace."""
-    figure, axes = plt.subplots(2, 2, figsize=_FIGURE_SIZE, sharex=True)
-    for trace in traces:
-        axes[0, 0].plot(trace.time, np.rad2deg(trace.error_angle()), label=trace.name)
-        axes[0, 1].plot(
-            trace.time, np.rad2deg(np.linalg.norm(trace.body_rate, axis=1)), label=trace.name
-        )
-        speeds = trace.wheel_speed(spacecraft) * 60.0 / (2.0 * np.pi)
-        axes[1, 0].plot(trace.time, np.max(np.abs(speeds), axis=1), label=trace.name)
-        axes[1, 1].plot(
-            trace.time, np.max(np.abs(trace.wheel_torque), axis=1), label=trace.name
-        )
+    """Plot the attitude error and the wheel torque against the torque limit.
 
-    axes[0, 0].set_ylabel("attitude error [deg]")
-    axes[0, 0].set_yscale("log")
-    axes[0, 1].set_ylabel("body rate [deg/s]")
-    axes[1, 0].set_ylabel("largest wheel speed [rpm]")
-    axes[1, 1].set_ylabel("largest wheel torque [N m]")
-    for axis in axes.flat:
-        axis.grid(True, alpha=0.3)
-        axis.legend(fontsize=8)
-    for axis in axes[1]:
+    The torque panel is what the settling times in the tables cannot show: the
+    over-driven design reaches the target sooner only by sitting on the wheel
+    torque limit, which appears here as a flat top against the dashed line.
+    """
+    figure, axes = plt.subplots(1, 2, figsize=_FIGURE_SIZE)
+    for trace in traces:
+        axes[0].semilogy(trace.time, np.rad2deg(trace.error_angle()), label=trace.name)
+        axes[1].plot(trace.time, np.max(np.abs(trace.wheel_torque), axis=1), label=trace.name)
+
+    axes[1].axhline(
+        spacecraft.wheels.max_torque,
+        color="0.3",
+        linestyle="--",
+        linewidth=1.0,
+        label="wheel torque limit",
+    )
+    axes[0].set_ylabel("attitude error [deg]")
+    axes[1].set_ylabel("largest wheel torque [N m]")
+    for axis in axes:
         axis.set_xlabel("time [s]")
-    figure.suptitle("Slew manoeuvre, controller comparison")
+        axis.grid(True, alpha=0.3)
+        axis.legend(fontsize=7)
+    figure.suptitle("Slew manoeuvre, controller comparison", fontsize=11)
     return _finish(figure, destination)
 
 
 def plot_disturbance(
-    trace: ScenarioTrace,
+    traces: Sequence[ScenarioTrace],
     spacecraft: Spacecraft,
     destination: Path,
 ) -> Path:
-    """Plot pointing error, disturbance torque, and accumulated wheel momentum."""
-    figure, axes = plt.subplots(3, 1, figsize=_FIGURE_SIZE, sharex=True)
-    hours = trace.time / 3600.0
-    axes[0].plot(hours, np.rad2deg(trace.error_angle()) * 3600.0, color="C0")
-    axes[0].set_ylabel("pointing error [arcsec]")
-    for index, label in enumerate("xyz"):
-        axes[1].plot(hours, trace.external_torque[:, index] * 1e6, label=f"body {label}")
-    axes[1].set_ylabel("disturbance torque [micro N m]")
-    axes[1].legend(fontsize=8)
-    axes[2].plot(
-        hours, np.linalg.norm(trace.stored_body_momentum, axis=1), color="C3", label="magnitude"
-    )
-    for index, label in enumerate("xyz"):
-        axes[2].plot(hours, trace.stored_body_momentum[:, index], alpha=0.6, label=f"body {label}")
-    axes[2].set_ylabel("stored momentum [N m s]")
-    axes[2].set_xlabel("time [h]")
-    axes[2].legend(fontsize=8)
-    for axis in axes:
-        axis.grid(True, alpha=0.3)
+    """Plot the pointing error and the stored momentum for each control law.
+
+    The two panels answer different questions. Integral action moves the error
+    curve towards zero; it leaves the momentum curve exactly where it was,
+    because the wheels still absorb every newton metre second the environment
+    delivers.
+    """
     del spacecraft
-    figure.suptitle("Gravity gradient disturbance rejection")
+    figure, axes = plt.subplots(1, 2, figsize=_FIGURE_SIZE)
+    for trace in traces:
+        hours = trace.time / 3600.0
+        axes[0].plot(hours, np.rad2deg(trace.error_angle()) * 3600.0, label=trace.name)
+        axes[1].plot(
+            hours, np.linalg.norm(trace.stored_body_momentum, axis=1), label=trace.name
+        )
+    axes[0].set_ylabel("pointing error [arcsec]")
+    axes[1].set_ylabel("stored momentum [N m s]")
+    for axis in axes:
+        axis.set_xlabel("time [h]")
+        axis.grid(True, alpha=0.3)
+        axis.legend(fontsize=7)
+    figure.suptitle("Gravity gradient hold, pointing and stored momentum", fontsize=11)
     return _finish(figure, destination)
 
 
@@ -104,9 +117,9 @@ def plot_dumping(
     destination: Path,
 ) -> Path:
     """Plot stored momentum and its split along and across the magnetic field."""
-    figure, axes = plt.subplots(len(traces), 1, figsize=_FIGURE_SIZE, sharex=True, squeeze=False)
-    for row, trace in enumerate(traces):
-        axis = axes[row, 0]
+    figure, axes = plt.subplots(1, len(traces), figsize=_FIGURE_SIZE, sharey=True, squeeze=False)
+    for column, trace in enumerate(traces):
+        axis = axes[0, column]
         hours = trace.time / 3600.0
         along = np.array(
             [
@@ -123,10 +136,10 @@ def plot_dumping(
         axis.plot(hours, np.linalg.norm(trace.stored_body_momentum, axis=1), label="total")
         axis.plot(hours, along, label="along field, not controllable")
         axis.plot(hours, across, label="across field, controllable")
-        axis.set_ylabel("momentum [N m s]")
-        axis.set_title(trace.name, fontsize=10)
+        axis.set_title(trace.name, fontsize=9)
+        axis.set_xlabel("time [h]")
         axis.grid(True, alpha=0.3)
-        axis.legend(fontsize=8)
-    axes[-1, 0].set_xlabel("time [h]")
-    figure.suptitle("Magnetic momentum dumping")
+        axis.legend(fontsize=7)
+    axes[0, 0].set_ylabel("momentum [N m s]")
+    figure.suptitle("Magnetic momentum dumping", fontsize=11)
     return _finish(figure, destination)

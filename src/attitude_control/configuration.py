@@ -24,6 +24,7 @@ from attitude_control.algorithm.controller import (
     AttitudeController,
     LinearQuadraticRegulator,
     QuaternionFeedbackPD,
+    QuaternionFeedbackPID,
 )
 from attitude_control.algorithm.momentum import MagneticDumping
 from attitude_control.model.attitude import quaternion_from_axis_angle, quaternion_identity
@@ -47,6 +48,7 @@ __all__ = [
     "AGGRESSIVE_NATURAL_FREQUENCY",
     "DUMPING_GAIN",
     "DUMPING_MAX_DIPOLE",
+    "INTEGRAL_FRACTION",
     "LQR_WEIGHTS",
     "NULL_SPACE_GAIN",
     "PD_DAMPING_RATIO",
@@ -60,6 +62,7 @@ __all__ = [
     "disturbance_scenario",
     "dumping_scenario",
     "initial_wheel_momentum",
+    "integral_controller",
     "orbiting_field_environment",
     "reference_orbit",
     "reference_spacecraft",
@@ -118,6 +121,13 @@ LQR_WEIGHTS: Final[LqrWeights] = LqrWeights(attitude=1.0, rate=1.0, torque=625.0
 # A deliberately over-driven PD design used to exercise wheel torque saturation.
 AGGRESSIVE_NATURAL_FREQUENCY: Final[float] = 0.05
 
+# Integral gain of the PID design, as a fraction of the Routh-Hurwitz limit
+# 2 zeta wn^3. A quarter of the limit places the integral pole at 0.0146 rad/s,
+# a 68 s time constant, which is fast against the 5739 s orbit period, and costs
+# damping: the dominant pair moves from zeta = 0.71 to zeta = 0.49. Anything
+# closer to the limit rings.
+INTEGRAL_FRACTION: Final[float] = 0.25
+
 
 def reference_spacecraft() -> Spacecraft:
     """Return the reference vehicle with its four wheel pyramid."""
@@ -155,6 +165,22 @@ def controllers(spacecraft: Spacecraft) -> tuple[AttitudeController, ...]:
             rate_weight=LQR_WEIGHTS.rate,
             torque_weight=LQR_WEIGHTS.torque,
         ),
+    )
+
+
+def integral_controller(spacecraft: Spacecraft) -> QuaternionFeedbackPID:
+    """Return the PD design of :func:`controllers` with integral action added.
+
+    Kept out of :func:`controllers` on purpose. The two laws returned there are
+    compared on the slew, where an integral term has nothing to do because no
+    disturbance acts; this one exists for the disturbance rejection run, where
+    the static offset is the thing being removed.
+    """
+    return QuaternionFeedbackPID(
+        spacecraft=spacecraft,
+        natural_frequency=PD_NATURAL_FREQUENCY,
+        damping_ratio=PD_DAMPING_RATIO,
+        integral_fraction=INTEGRAL_FRACTION,
     )
 
 
