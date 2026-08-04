@@ -151,6 +151,23 @@ be slowed down, because that is what the hardware does. Both limits break the
 exactness of the allocation, so `Allocation` reports which acted, and the
 over-driven slew in the results shows the effect.
 
+What the array can deliver as a whole is a different question from what one
+allocation reaches, and `model/envelope.py` answers it in closed form. The
+achievable set is the image of the per wheel torque box under `W`, a zonotope,
+and every face of a zonotope in three dimensions is spanned by two of its
+generators, so the set is the intersection of six slabs and no optimisation is
+involved anywhere. For this array the four spin axes are four body diagonals of a
+cube, which makes the envelope a rhombic dodecahedron: 0.1155 N m about any body
+axis, 0.1000 N m about any spin axis, and 0.0816 N m about every direction, the
+last being the radius of the inscribed sphere and the number a design should be
+sized against, since the direction the demand falls in is chosen by the manoeuvre
+rather than by the array. The momentum envelope is the same shape at the
+4.0 N m s per wheel limit, so the array holds 6.53 N m s whichever way it is
+loaded, against the 0.143 N m s an orbit deposits. The reference slew peaks at
+0.0366 N m, 45 per cent of the guaranteed radius; the over-driven design peaks at
+0.2287 N m, which is outside the envelope in every direction, and that is why
+that run sits against the torque limit rather than merely near it.
+
 ### Momentum management: cross product law
 
 The unloading law is `m = (k / |B|^2) (h x B)`, which produces
@@ -227,9 +244,14 @@ management story that is the subject of this package.
 Solving `min |u|_inf` subject to `W u = -L` would use the achievable torque set
 better than the minimum norm solution, since the limits are per wheel and
 therefore an infinity norm constraint. It was rejected because the improvement is
-small for an isotropic array, roughly the ratio between the two norms in four
-dimensions, and because the pseudoinverse has a closed form that makes the
-exactness of the allocation provable rather than merely observed.
+bounded and now measured rather than estimated: about a spin axis the minimum
+norm solution puts three quarters of the demand on one wheel, so it is guaranteed
+to fit inside the limits only out to 0.0667 N m against the 0.0816 N m the
+envelope guarantees, a factor of `sqrt(3/2)`. Commands in that band are
+achievable and are still reported as saturated; `envelope.py` measures that gap
+rather than closing it. The other reason is that the pseudoinverse has a closed
+form, which makes the exactness of the allocation provable rather than merely
+observed.
 
 ### Higher fidelity magnetic field
 
