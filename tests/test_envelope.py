@@ -127,9 +127,7 @@ def test_the_envelope_radii_are_attained_by_wheel_torques_inside_the_limits(
         assert maximum_torque_about(wheels, direction) == pytest.approx(
             radius * limit, rel=_RELATIVE_TOLERANCE
         )
-        assert torque_utilisation(wheels, delivered) == pytest.approx(
-            1.0, rel=_RELATIVE_TOLERANCE
-        )
+        assert torque_utilisation(wheels, delivered) == pytest.approx(1.0, rel=_RELATIVE_TOLERANCE)
 
 
 def test_the_guaranteed_radius_matches_a_search_over_the_corners_of_the_torque_box(
@@ -174,9 +172,7 @@ def test_a_command_past_the_envelope_cannot_be_realised(
     for _ in range(200):
         direction = unit(generator.normal(size=3))
         command = 1.001 * maximum_torque_about(wheels, direction) * direction
-        assert torque_utilisation(wheels, command) == pytest.approx(
-            1.001, rel=_RELATIVE_TOLERANCE
-        )
+        assert torque_utilisation(wheels, command) == pytest.approx(1.001, rel=_RELATIVE_TOLERANCE)
         assert float(np.max(np.abs(normals @ command) - supports)) > 0.0
 
 
