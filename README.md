@@ -312,7 +312,7 @@ Five layers, each importing only from the ones above it.
 
 | Layer | Contents | Rule it keeps |
 | --- | --- | --- |
-| `model/` | attitude representations and conversions, inertia and wheel geometry, Euler's equation with wheels, gravity gradient and dipole field | pure, no state and no input or output, every function testable against a closed form |
+| `model/` | attitude representations and conversions, inertia and wheel geometry, the torque and momentum envelope of the array, Euler's equation with wheels, gravity gradient and dipole field | pure, no state and no input or output, every function testable against a closed form |
 | `algorithm/` | the controller protocol and the three laws, wheel allocation with null space steering and saturation, cross product unloading | maps a state to a command, never integrates |
 | `pipeline/` | fixed step RK4 with the closed form norm drift, scenario configuration and the runner | owns time, produces a trace without interpreting it |
 | `analysis/` | manoeuvre metrics, round trip residuals, text tables, figures | only reads traces |

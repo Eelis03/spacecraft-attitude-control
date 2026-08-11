@@ -44,6 +44,15 @@ from attitude_control.model.dynamics import (
     rotational_kinetic_energy,
     state_derivative,
 )
+from attitude_control.model.envelope import (
+    envelope_normals,
+    guaranteed_momentum,
+    guaranteed_torque,
+    maximum_momentum_about,
+    maximum_torque_about,
+    momentum_utilisation,
+    torque_utilisation,
+)
 from attitude_control.model.environment import (
     CircularOrbit,
     ConstantField,
@@ -75,13 +84,19 @@ __all__ = [
     "dcm_from_euler321",
     "dcm_from_mrp",
     "dcm_from_quaternion",
+    "envelope_normals",
     "euler321_from_dcm",
     "euler321_from_quaternion",
     "gravity_gradient_torque",
+    "guaranteed_momentum",
+    "guaranteed_torque",
     "gyroscopic_torque",
     "inertial_angular_momentum",
     "is_rotation_matrix",
     "magnetic_torque",
+    "maximum_momentum_about",
+    "maximum_torque_about",
+    "momentum_utilisation",
     "mrp_derivative",
     "mrp_from_dcm",
     "mrp_from_quaternion",
@@ -106,4 +121,5 @@ __all__ = [
     "skew",
     "state_derivative",
     "symmetric_inertia",
+    "torque_utilisation",
 ]
