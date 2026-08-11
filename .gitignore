@@ -9,6 +9,9 @@ dist/
 build/
 *.egg-info/
 outputs/
+.coverage
+.coverage.*
+htmlcov/
 .DS_Store
 # Scratch output of the example scripts. The published figures live in
 # docs/figures and are tracked, so only the top level directory is ignored.
