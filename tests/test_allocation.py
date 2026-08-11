@@ -58,9 +58,7 @@ def test_allocation_is_exact_with_null_space_steering(
     for command in achievable_torques(wheels, generator, 100):
         momentum = generator.normal(size=4) * 0.5
         plain = allocate(wheels, command, momentum, enforce_limits=False)
-        steered = allocate(
-            wheels, command, momentum, null_space_gain=0.05, enforce_limits=False
-        )
+        steered = allocate(wheels, command, momentum, null_space_gain=0.05, enforce_limits=False)
         assert np.allclose(steered.delivered_torque, command, atol=_ALLOCATION_TOLERANCE)
         assert not np.allclose(steered.wheel_torque, plain.wheel_torque, atol=1e-9)
 
@@ -111,9 +109,7 @@ def test_minimum_norm_solution_is_the_smallest(
 def test_torque_limit_clips_and_reports(wheels: WheelArray) -> None:
     """Motor torque beyond the limit is clipped and the flag is raised."""
     excessive = np.array([1.0, -1.0, 0.5, -0.5]) * wheels.max_torque * 2.0
-    limited, torque_saturated, momentum_saturated = apply_limits(
-        wheels, excessive, np.zeros(4)
-    )
+    limited, torque_saturated, momentum_saturated = apply_limits(wheels, excessive, np.zeros(4))
     assert torque_saturated
     assert not momentum_saturated
     assert np.allclose(np.abs(limited), np.abs(np.clip(excessive, -0.05, 0.05)))
@@ -151,17 +147,13 @@ def test_saturation_makes_the_delivered_torque_fall_short(wheels: WheelArray) ->
 
 def test_pseudoinverse_is_a_right_inverse(wheels: WheelArray) -> None:
     """``W W^+`` is the identity, which is the reason allocation can be exact."""
-    assert np.allclose(
-        wheels.axes @ wheels.pseudoinverse, np.eye(3), atol=_ALLOCATION_TOLERANCE
-    )
+    assert np.allclose(wheels.axes @ wheels.pseudoinverse, np.eye(3), atol=_ALLOCATION_TOLERANCE)
     assert np.allclose(
         wheels.null_projector @ wheels.null_projector,
         wheels.null_projector,
         atol=_ALLOCATION_TOLERANCE,
     )
-    assert np.allclose(
-        wheels.null_projector, wheels.null_projector.T, atol=_ALLOCATION_TOLERANCE
-    )
+    assert np.allclose(wheels.null_projector, wheels.null_projector.T, atol=_ALLOCATION_TOLERANCE)
     assert int(np.linalg.matrix_rank(wheels.null_projector)) == 1
 
 

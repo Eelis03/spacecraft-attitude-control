@@ -88,9 +88,7 @@ def test_quaternion_dcm_round_trip(generator: np.random.Generator) -> None:
     """Quaternion to matrix to quaternion returns the canonical original."""
     for quaternion in random_quaternions(generator, _SAMPLES):
         recovered = quaternion_from_dcm(dcm_from_quaternion(quaternion))
-        assert np.allclose(
-            recovered, quaternion_canonical(quaternion), atol=_CONVERSION_TOLERANCE
-        )
+        assert np.allclose(recovered, quaternion_canonical(quaternion), atol=_CONVERSION_TOLERANCE)
 
 
 def test_sign_flip_is_the_same_attitude(generator: np.random.Generator) -> None:

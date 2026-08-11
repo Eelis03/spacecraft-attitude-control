@@ -163,9 +163,7 @@ def allocate(
     torque_saturated = False
     momentum_saturated = False
     if enforce_limits:
-        torque, torque_saturated, momentum_saturated = apply_limits(
-            wheels, torque, wheel_momentum
-        )
+        torque, torque_saturated, momentum_saturated = apply_limits(wheels, torque, wheel_momentum)
 
     return Allocation(
         wheel_torque=torque,

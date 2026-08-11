@@ -180,9 +180,7 @@ def build_reference() -> dict[str, Any]:
                 2.0 * np.pi * np.sqrt(orbit.radius**3 / GRAVITATIONAL_PARAMETER)
             ),
             "lqr_attitude_gain": float(lqr.gain[0, 0]),
-            "lqr_attitude_gain_formula": float(
-                np.sqrt(LQR_WEIGHTS.attitude / LQR_WEIGHTS.torque)
-            ),
+            "lqr_attitude_gain_formula": float(np.sqrt(LQR_WEIGHTS.attitude / LQR_WEIGHTS.torque)),
             "lqr_slowest_pole_rad_s": float(np.min(np.abs(lqr.closed_loop_poles))),
             "pyramid_gram_diagonal": float((axes @ axes.T)[0, 0]),
         },
@@ -196,9 +194,7 @@ def build_reference() -> dict[str, Any]:
             "peak_disturbance_torque_nm": float(
                 np.max(np.linalg.norm(disturbance.external_torque, axis=1))
             ),
-            "stored_momentum_end_nms": float(
-                np.linalg.norm(disturbance.stored_body_momentum[-1])
-            ),
+            "stored_momentum_end_nms": float(np.linalg.norm(disturbance.stored_body_momentum[-1])),
             "peak_wheel_speed_rpm": ManoeuvreMetrics.evaluate(
                 disturbance, spacecraft
             ).peak_wheel_speed_rpm,
@@ -265,9 +261,7 @@ def produced() -> dict[str, Any]:
     return build_reference()
 
 
-def test_settings_have_not_drifted(
-    reference: dict[str, Any], produced: dict[str, Any]
-) -> None:
+def test_settings_have_not_drifted(reference: dict[str, Any], produced: dict[str, Any]) -> None:
     """The reference is only meaningful if it was recorded with these settings."""
     assert produced["settings"] == reference["settings"]
 

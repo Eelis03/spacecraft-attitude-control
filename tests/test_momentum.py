@@ -170,9 +170,7 @@ def test_a_fixed_field_conserves_momentum_along_it_over_a_full_run(
     )
 
     assert float(np.max(np.abs(projection - projection[0]))) < bound
-    perpendicular = np.linalg.norm(
-        trace.inertial_momentum - np.outer(projection, axis), axis=1
-    )
+    perpendicular = np.linalg.norm(trace.inertial_momentum - np.outer(projection, axis), axis=1)
     decay = float(np.exp(-DUMPING_GAIN * config.duration))
     assert perpendicular[-1] == pytest.approx(perpendicular[0] * decay, rel=0.01)
 

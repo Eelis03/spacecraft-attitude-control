@@ -187,9 +187,7 @@ class QuaternionFeedbackPD:
         if self.damping_ratio <= 0.0:
             raise ValueError("damping ratio must be positive")
         inertia = self.spacecraft.inertia
-        object.__setattr__(
-            self, "proportional_gain", 2.0 * self.natural_frequency**2 * inertia
-        )
+        object.__setattr__(self, "proportional_gain", 2.0 * self.natural_frequency**2 * inertia)
         object.__setattr__(
             self,
             "derivative_gain",
@@ -379,9 +377,7 @@ class LinearQuadraticRegulator:
             solve_continuous_are(dynamics, input_matrix, state_cost, input_cost), (6, 6)
         )
         object.__setattr__(self, "riccati_solution", solution)
-        object.__setattr__(
-            self, "gain", np.linalg.solve(input_cost, input_matrix.T @ solution)
-        )
+        object.__setattr__(self, "gain", np.linalg.solve(input_cost, input_matrix.T @ solution))
 
     @property
     def name(self) -> str:
