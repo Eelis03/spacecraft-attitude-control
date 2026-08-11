@@ -42,9 +42,7 @@ def format_table(header: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     ]
     lines = ["  ".join(str(header[i]).ljust(widths[i]) for i in range(columns))]
     lines.append("  ".join("-" * width for width in widths))
-    lines.extend(
-        "  ".join(str(row[i]).ljust(widths[i]) for i in range(columns)) for row in rows
-    )
+    lines.extend("  ".join(str(row[i]).ljust(widths[i]) for i in range(columns)) for row in rows)
     return "\n".join(lines)
 
 

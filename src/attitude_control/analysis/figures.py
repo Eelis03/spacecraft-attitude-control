@@ -99,9 +99,7 @@ def plot_disturbance(
     for trace in traces:
         hours = trace.time / 3600.0
         axes[0].plot(hours, np.rad2deg(trace.error_angle()) * 3600.0, label=trace.name)
-        axes[1].plot(
-            hours, np.linalg.norm(trace.stored_body_momentum, axis=1), label=trace.name
-        )
+        axes[1].plot(hours, np.linalg.norm(trace.stored_body_momentum, axis=1), label=trace.name)
     axes[0].set_ylabel("pointing error [arcsec]")
     axes[1].set_ylabel("stored momentum [N m s]")
     for axis in axes:

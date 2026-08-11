@@ -143,9 +143,7 @@ class ManoeuvreMetrics:
             peak_body_rate_deg_s=float(np.rad2deg(np.max(np.linalg.norm(trace.body_rate, axis=1)))),
             peak_wheel_speed_rpm=float(np.max(np.abs(speeds)) * 60.0 / (2.0 * np.pi)),
             peak_wheel_torque_nm=float(np.max(np.abs(trace.wheel_torque))),
-            peak_commanded_torque_nm=float(
-                np.max(np.linalg.norm(trace.commanded_torque, axis=1))
-            ),
+            peak_commanded_torque_nm=float(np.max(np.linalg.norm(trace.commanded_torque, axis=1))),
             peak_stored_momentum_nms=float(
                 np.max(np.linalg.norm(trace.stored_body_momentum, axis=1))
             ),

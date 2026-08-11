@@ -45,9 +45,7 @@ def main() -> None:
     residuals = round_trip_residuals(samples, _SEED)
     defect = worst_orthonormality_defect(samples, _SEED)
 
-    rows = [
-        (name, f"{value:.3e}", f"{np.rad2deg(value):.3e}") for name, value in residuals.items()
-    ]
+    rows = [(name, f"{value:.3e}", f"{np.rad2deg(value):.3e}") for name, value in residuals.items()]
     print(f"{samples} random rotations, worst round trip error as a principal angle")
     print(format_table(("path", "error [rad]", "error [deg]"), rows))
     print(f"\nworst departure from orthonormality: {defect:.3e}")
@@ -71,10 +69,7 @@ def main() -> None:
         f"  s      = {np.array2string(parameters, precision=6)}, "
         f"norm {np.linalg.norm(parameters):.6f}"
     )
-    print(
-        f"  shadow = {np.array2string(shadow, precision=6)}, "
-        f"norm {np.linalg.norm(shadow):.6f}"
-    )
+    print(f"  shadow = {np.array2string(shadow, precision=6)}, norm {np.linalg.norm(shadow):.6f}")
     print(f"  product of the two norms: {np.linalg.norm(parameters) * np.linalg.norm(shadow):.6f}")
     print(
         "  identical attitude matrix to "

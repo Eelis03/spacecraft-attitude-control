@@ -1,0 +1,15 @@
+# Only the workflow actions are tracked here. The Python dependencies are
+# declared with lower bounds rather than pins, so they float on their own and a
+# bot proposing to raise the floor would be noise. Action versions do not float:
+# they are pinned by major tag and go stale silently, which is what this catches.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]

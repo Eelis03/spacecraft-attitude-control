@@ -296,9 +296,7 @@ def test_overshoot_matches_the_second_order_value(spacecraft: Spacecraft) -> Non
         sample_stride=10,
     )
     metrics = ManoeuvreMetrics.evaluate(run_scenario(config), spacecraft)
-    analytic = 100.0 * np.exp(
-        -np.pi * PD_DAMPING_RATIO / np.sqrt(1.0 - PD_DAMPING_RATIO**2)
-    )
+    analytic = 100.0 * np.exp(-np.pi * PD_DAMPING_RATIO / np.sqrt(1.0 - PD_DAMPING_RATIO**2))
     assert analytic == pytest.approx(4.3214, abs=1e-4)
     assert metrics.overshoot_percent == pytest.approx(analytic, abs=0.01)
 

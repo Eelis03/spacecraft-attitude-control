@@ -6,14 +6,29 @@ on:
   pull_request:
     branches: [main]
 
+# The workflow only ever reads the repository. Narrowing the token here means a
+# compromised dependency of any step cannot write to the repository, open a pull
+# request, or publish a package under this identity.
+permissions:
+  contents: read
+
+# A second push to the same branch makes the run already in flight irrelevant,
+# so it is cancelled rather than left to finish against a superseded commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    name: Python 3.12 on ${{ matrix.os }}
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # The package declares requires-python >=3.12, so every version that
+        # declaration admits is tested rather than assumed.
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v5
@@ -24,19 +39,24 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --python ${{ matrix.python-version }} --all-extras --dev
 
       # Measured at 99.07 per cent locally. The gate is two points below the
       # measurement rounded down, which leaves room for a platform difference in
       # a branch or two without leaving room for a test to be deleted.
       - name: Run tests
-        run: uv run pytest -q --cov=src/attitude_control --cov-report=term-missing --cov-fail-under=97
+        run: >
+          uv run --python ${{ matrix.python-version }} pytest -q
+          --cov=src/attitude_control --cov-report=term-missing --cov-fail-under=97
 
       - name: Lint
-        run: uv run ruff check .
+        run: uv run --python ${{ matrix.python-version }} ruff check .
+
+      - name: Check formatting
+        run: uv run --python ${{ matrix.python-version }} ruff format --check .
 
       - name: Type check
-        run: uv run mypy
+        run: uv run --python ${{ matrix.python-version }} mypy

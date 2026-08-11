@@ -312,9 +312,7 @@ def test_dipole_field_is_twice_as_strong_over_the_pole() -> None:
         orbit=CircularOrbit(radius=7.0e6, inclination=0.5 * np.pi, initial_argument=0.5 * np.pi),
         tilt=0.0,
     )
-    equatorial = TiltedDipoleField(
-        orbit=CircularOrbit(radius=7.0e6, inclination=0.0), tilt=0.0
-    )
+    equatorial = TiltedDipoleField(orbit=CircularOrbit(radius=7.0e6, inclination=0.0), tilt=0.0)
     polar_strength = float(np.linalg.norm(aligned.field_inertial(0.0)))
     equatorial_strength = float(np.linalg.norm(equatorial.field_inertial(0.0)))
     assert polar_strength == pytest.approx(2.0 * equatorial_strength, rel=1e-12)

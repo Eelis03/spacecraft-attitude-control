@@ -68,9 +68,7 @@ def slew_traces() -> list[ScenarioTrace]:
     """Two short slews, one per control law, enough to exercise every reader."""
     spacecraft = reference_spacecraft()
     return [
-        run_scenario(
-            slew_scenario(spacecraft, law, duration=60.0, time_step=0.5, sample_stride=5)
-        )
+        run_scenario(slew_scenario(spacecraft, law, duration=60.0, time_step=0.5, sample_stride=5))
         for law in controllers(spacecraft)
     ]
 
@@ -207,9 +205,7 @@ def test_disturbance_figure_accepts_several_control_laws(
 ) -> None:
     """The pointing panel compares laws, so it has to take more than one trace."""
     traces = [
-        run_scenario(
-            slew_scenario(spacecraft, law, duration=40.0, time_step=0.5, sample_stride=5)
-        )
+        run_scenario(slew_scenario(spacecraft, law, duration=40.0, time_step=0.5, sample_stride=5))
         for law in (controllers(spacecraft)[0], integral_controller(spacecraft))
     ]
     path = plot_disturbance(traces, spacecraft, tmp_path / "disturbance.png")
